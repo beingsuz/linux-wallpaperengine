@@ -130,6 +130,12 @@ protected:
     void setupInitializers ();
     void setupOperators ();
 
+    /**
+     * Samples the audio spectrum (0..1) for audio-reactive emitters/operators.
+     * Returns 0 when audio processing is disabled (mode <= 0) or silent.
+     */
+    [[nodiscard]] float sampleAudio (int mode, int freqStart, int freqEnd, int exponent) const;
+
     // Emitter creators
     EmitterFunc createBoxEmitter (const ParticleEmitter& emitter);
     EmitterFunc createSphereEmitter (const ParticleEmitter& emitter);

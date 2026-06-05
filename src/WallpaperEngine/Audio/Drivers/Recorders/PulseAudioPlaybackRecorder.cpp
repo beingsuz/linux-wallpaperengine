@@ -1,6 +1,8 @@
 #include "PulseAudioPlaybackRecorder.h"
 #include "WallpaperEngine/Logging/Log.h"
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <glm/common.hpp>
 
@@ -116,8 +118,14 @@ void pa_server_info_cb (pa_context* ctx, const pa_server_info* info, void* userd
     pa_stream_set_state_callback (recorder->captureStream, &pa_stream_notify_cb, userdata);
     pa_stream_set_read_callback (recorder->captureStream, &pa_stream_read_cb, userdata);
 
-    std::string monitor_name (info->default_sink_name);
-    monitor_name += ".monitor";
+    // Use the configured source if set, otherwise the default sink's monitor.
+    std::string monitor_name;
+    if (!recorder->device.empty ()) {
+	monitor_name = recorder->device;
+    } else {
+	monitor_name = info->default_sink_name;
+	monitor_name += ".monitor";
+    }
 
     // setup latency
     pa_buffer_attr attr {};
@@ -174,11 +182,14 @@ void pa_context_notify_cb (pa_context* ctx, void* userdata) {
     }
 }
 
-PulseAudioPlaybackRecorder::PulseAudioPlaybackRecorder () :
+PulseAudioPlaybackRecorder::PulseAudioPlaybackRecorder (std::string device) :
     m_captureData (
 	{ .kisscfg = kiss_fftr_alloc (WAVE_BUFFER_SIZE, 0, nullptr, nullptr),
-	  .audioBuffer = new uint8_t[WAVE_BUFFER_SIZE],
-	  .audioBufferTmp = new uint8_t[WAVE_BUFFER_SIZE] }
+	  // value-initialize ("()") so silence/failed capture reads as zeros, not
+	  // uninitialized noise (which renders as random audio-reactive particles)
+	  .audioBuffer = new uint8_t[WAVE_BUFFER_SIZE] (),
+	  .audioBufferTmp = new uint8_t[WAVE_BUFFER_SIZE] (),
+	  .device = std::move (device) }
     ) {
     this->m_mainloop = pa_mainloop_new ();
     this->m_mainloopApi = pa_mainloop_get_api (this->m_mainloop);
@@ -214,6 +225,27 @@ PulseAudioPlaybackRecorder::~PulseAudioPlaybackRecorder () {
 void PulseAudioPlaybackRecorder::update () {
     pa_mainloop_iterate (this->m_mainloop, 0, nullptr);
 
+    // DEBUG (WPE_AUDIO_DEBUG=1): periodically log capture activity to a file so
+    // we can tell whether samples are actually arriving from the chosen source.
+    if (std::getenv ("WPE_AUDIO_DEBUG")) {
+	static int dbg = 0;
+	if (++dbg % 60 == 0) {
+	    float peak = 0.0f;
+	    double sumSq = 0.0;
+	    for (int i = 0; i < 64; i++)
+		peak = std::max (peak, this->audio64[i]);
+	    for (int i = 0; i < WAVE_BUFFER_SIZE; i++) {
+		const double d = (int) this->m_captureData.audioBuffer[i] - 128;
+		sumSq += d * d;
+	    }
+	    const double rms = std::sqrt (sumSq / WAVE_BUFFER_SIZE);
+	    if (FILE* f = fopen ("/tmp/we-audio-debug.log", "a")) {
+		fprintf (f, "rms=%.2f peakFFT=%.4f\n", rms, peak);
+		fclose (f);
+	    }
+	}
+    }
+
     // interpolate current values to the destination
     for (int i = 0; i < 64; i++) {
 	this->audio64[i] = movetowards (this->audio64[i], this->m_FFTdestination64[i], 0.3f);
@@ -232,6 +264,35 @@ void PulseAudioPlaybackRecorder::update () {
     }
 
     this->m_captureData.fullFrameReady = false;
+
+    // Noise gate: a monitor source is never perfectly silent, and the log-scaled
+    // FFT amplifies that noise floor into visible (random-looking) output. Use
+    // the frame's RMS energy (stable, unlike peak-to-peak which spikes on single
+    // noisy samples) to decide if there's real sound; below the gate we treat it
+    // as silence so audio-reactive wallpapers stay still until audio plays.
+    // Tunable via WPE_AUDIO_GATE (RMS in 0-128 units; 0 disables).
+    float gate = 10.0f;
+    if (const char* g = std::getenv ("WPE_AUDIO_GATE")) {
+	gate = std::atof (g);
+    }
+    if (gate > 0.0f) {
+	double sumSquares = 0.0;
+	for (int i = 0; i < WAVE_BUFFER_SIZE; i++) {
+	    const double d = static_cast<int> (this->m_captureData.audioBuffer[i]) - 128;
+	    sumSquares += d * d;
+	}
+	const double rms = std::sqrt (sumSquares / WAVE_BUFFER_SIZE);
+	if (rms < gate) {
+	    for (int i = 0; i < 64; i++) {
+		this->m_FFTdestination64[i] = 0.0f;
+		if (i < 32)
+		    this->m_FFTdestination32[i] = 0.0f;
+		if (i < 16)
+		    this->m_FFTdestination16[i] = 0.0f;
+	    }
+	    return;
+	}
+    }
 
     // convert audio data to deltas so the fft library can properly handle it
     for (int i = 0; i < WAVE_BUFFER_SIZE; i++) {

@@ -3,6 +3,7 @@
 #include "PlaybackRecorder.h"
 #include "kiss_fftr.h"
 #include <pulse/pulseaudio.h>
+#include <string>
 
 #define WAVE_BUFFER_SIZE 1024
 
@@ -21,9 +22,11 @@ public:
 	size_t currentWritePointer;
 	bool fullFrameReady;
 	pa_stream* captureStream;
+	/** Source to record from; empty means the default sink's monitor */
+	std::string device;
     };
 
-    PulseAudioPlaybackRecorder ();
+    explicit PulseAudioPlaybackRecorder (std::string device = "");
     ~PulseAudioPlaybackRecorder () override;
 
     void update () override;
