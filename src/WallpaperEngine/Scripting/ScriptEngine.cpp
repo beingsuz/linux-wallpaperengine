@@ -577,8 +577,43 @@ void ScriptEngine::queueScript (const std::string& key, DynamicValue& currentVal
 	return;
     }
 
-    // load the script and store it
-    JSValue module = JS_Eval (this->m_context, source->c_str (), source->size (), key.c_str (), JS_EVAL_TYPE_MODULE);
+    // Compile the module first, then evaluate it and grab its export namespace.
+    // JS_Eval of a module returns the *evaluation result*, not the namespace, so
+    // the exported init()/update() functions are not reachable on it (they'd
+    // resolve to undefined and every property script would silently no-op). The
+    // correct value to call exports on is the module namespace.
+    JSValue compiled = JS_Eval (
+	this->m_context, source->c_str (), source->size (), key.c_str (),
+	JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY
+    );
+
+    if (JS_IsException (compiled)) {
+	logJSException (this->m_context, key.c_str ());
+	return;
+    }
+
+    JSModuleDef* moduleDef = static_cast<JSModuleDef*> (JS_VALUE_GET_PTR (compiled));
+
+    // Evaluate the module body (runs top-level statements like
+    // engine.registerAudioBuffers()). JS_EvalFunction consumes `compiled`.
+    JSValue evalResult = JS_EvalFunction (this->m_context, compiled);
+    if (JS_IsException (evalResult)) {
+	logJSException (this->m_context, key.c_str ());
+	JS_FreeValue (this->m_context, evalResult);
+	return;
+    }
+    JS_FreeValue (this->m_context, evalResult);
+
+    // Drain the job queue so a module evaluating asynchronously finishes.
+    JSContext* pctx = nullptr;
+    while (JS_ExecutePendingJob (JS_GetRuntime (this->m_context), &pctx) > 0) {
+    }
+
+    JSValue module = JS_GetModuleNamespace (this->m_context, moduleDef);
+    if (JS_IsException (module)) {
+	logJSException (this->m_context, key.c_str ());
+	return;
+    }
 
     auto inserted = this->m_scriptModules.emplace (
 	key,
@@ -596,6 +631,19 @@ void ScriptEngine::queueScript (const std::string& key, DynamicValue& currentVal
 
     // script properties do not need update as they're connected directly to the source data
     this->m_runningModule = &inserted.first->second;
+
+    // Many scripts capture their starting value (and build their state) in an
+    // init(value) hook that runs once before the first update — e.g. audio
+    // reactive properties scale their initial value, visualizers allocate their
+    // bars. Without it update() sees uninitialised state (NaN / missing arrays),
+    // so call it here (no-op if the script doesn't export init).
+    JSValue initArgs[] = { this->dynamicToJs (currentValue) };
+    JSValue initResult = this->call (module, 1, initArgs, "init");
+    if (JS_IsException (initResult)) {
+	logJSException (this->m_context, key.c_str ());
+    }
+    JS_FreeValue (this->m_context, initResult);
+    JS_FreeValue (this->m_context, initArgs[0]);
 
     // check if there's an update method and run it
     JSValue args[] = { this->dynamicToJs (currentValue) };

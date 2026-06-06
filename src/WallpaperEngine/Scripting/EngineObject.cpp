@@ -1,6 +1,9 @@
 #include "EngineObject.h"
 #include "ScriptEngine.h"
+#include "WallpaperEngine/Audio/AudioContext.h"
+#include "WallpaperEngine/Audio/Drivers/Recorders/PlaybackRecorder.h"
 #include "WallpaperEngine/Logging/Log.h"
+#include "WallpaperEngine/Render/Wallpapers/CScene.h"
 
 #include <ranges>
 
@@ -135,6 +138,56 @@ JSValue engine_set_timeout (JSContext* ctx, JSValueConst this_val, int argc, JSV
     return JS_NewCFunctionData (ctx, engine_stop_timeout, 2, magic, 1, args);
 }
 
+// Getter for the `average` property of the object returned by
+// engine.registerAudioBuffers(). Returns a fresh JS array of the current
+// frequency-band levels so scripts always read live audio. func_data[0] holds
+// the resolution (16/32/64); magic holds the engine instance id.
+JSValue engine_audio_buffer_average (
+    JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv, int magic, JSValueConst* func_data
+) {
+    int resolution = 64;
+    JS_ToInt32 (ctx, &resolution, func_data[0]);
+
+    JSValue arr = JS_NewArray (ctx);
+
+    const auto it = engineInstances.find (magic);
+    if (it == engineInstances.end ()) {
+	return arr;
+    }
+
+    const auto& recorder = it->second.getScene ().getAudioContext ().getRecorder ();
+    const float* data = resolution == 16 ? recorder.audio16 : (resolution == 32 ? recorder.audio32 : recorder.audio64);
+
+    for (int i = 0; i < resolution; i++) {
+	JS_SetPropertyUint32 (ctx, arr, i, JS_NewFloat64 (ctx, data[i]));
+    }
+
+    return arr;
+}
+
+// engine.registerAudioBuffers(resolution) -> { average: [<resolution> floats] }
+// Used by audio-reactive scripts (particle rates, visualizer bars).
+JSValue engine_register_audio_buffers (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv, int magic) {
+    int resolution = 64;
+    if (argc >= 1) {
+	JS_ToInt32 (ctx, &resolution, argv[0]);
+    }
+    if (resolution != 16 && resolution != 32 && resolution != 64) {
+	resolution = 64;
+    }
+
+    JSValue obj = JS_NewObject (ctx);
+    JSValue data[] = { JS_NewInt32 (ctx, resolution) };
+    JSValue getter = JS_NewCFunctionData (ctx, engine_audio_buffer_average, 0, magic, 1, data);
+    JS_FreeValue (ctx, data[0]);
+
+    JS_DefinePropertyGetSet (
+	ctx, obj, JS_NewAtom (ctx, "average"), getter, JS_UNDEFINED, JS_PROP_ENUMERABLE
+    );
+
+    return obj;
+}
+
 EngineObject::EngineObject (ScriptEngine& engine, Render::Wallpapers::CScene& scene) :
     m_scene (scene), m_engine (engine), m_instanceId (++EngineInstanceId), m_classId (0) {
     this->m_definition = { .class_name = "IEngine" };
@@ -192,7 +245,20 @@ EngineObject::EngineObject (ScriptEngine& engine, Render::Wallpapers::CScene& sc
 	JS_NewCFunction (this->m_engine.getContext (), engine_open_user_shortcut, "openUserShortcut", 0),
 	JS_PROP_ENUMERABLE
     );
+    JS_DefinePropertyValueStr (
+	this->m_engine.getContext (), this->m_instance, "registerAudioBuffers",
+	JS_NewCFunctionMagic (
+	    this->m_engine.getContext (), engine_register_audio_buffers, "registerAudioBuffers", 1,
+	    JS_CFUNC_generic_magic, this->m_instanceId
+	),
+	JS_PROP_ENUMERABLE
+    );
     // TODO: ADD THE REST OF THE DEFINITION!
+
+    // Register this instance so the magic-tagged C functions (setInterval,
+    // setTimeout, registerAudioBuffers, ...) can find it by id. The destructor
+    // erases it; without this insert every lookup fails and those APIs no-op.
+    engineInstances.emplace (this->m_instanceId, *this);
 }
 
 EngineObject::~EngineObject () {
