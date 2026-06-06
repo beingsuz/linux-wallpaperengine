@@ -60,6 +60,19 @@ public:
     virtual void setPause (bool newState);
 
     /**
+     * Sets the audio volume at runtime (0-128 Wallpaper Engine scale; 0 mutes).
+     * Default is a no-op; wallpaper types with audio override it.
+     */
+    virtual void setAudioVolume (int volume) { (void) volume; }
+
+    /**
+     * Sets playback speed at runtime. Scenes are driven by the global scaled
+     * clock; only media (video) wallpapers need to react here, so the default is
+     * a no-op.
+     */
+    virtual void setPlaybackSpeed (float speed) { (void) speed; }
+
+    /**
      * @return The container to resolve files for this wallpaper
      */
     [[nodiscard]] const AssetLocator& getAssetLocator () const;

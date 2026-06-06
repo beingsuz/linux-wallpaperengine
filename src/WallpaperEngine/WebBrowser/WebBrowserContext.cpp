@@ -6,8 +6,46 @@
 #include "include/cef_render_handler.h"
 #include <filesystem>
 #include <random>
+#include <string>
+#include <unistd.h>
+#include <vector>
 
 using namespace WallpaperEngine::WebBrowser;
+
+int WebBrowserContext::executeSubprocess (int argc, char* argv[]) {
+    CefMainArgs main_args (argc, argv);
+
+    // The subprocess must register the same wp<workshopId> custom schemes as the
+    // browser process. Derive them from the --bg paths already present in argv
+    // (re-appended by BrowserApp::OnBeforeChildProcessLaunch) — the workshop id is
+    // the basename of the item directory. This avoids any file IO, which would
+    // close the inherited ICU data descriptor before CefExecuteProcess reads it.
+    std::vector<std::string> workshopIds;
+    auto addId = [&workshopIds] (std::string path) {
+	while (!path.empty () && path.back () == '/') {
+	    path.pop_back ();
+	}
+	const auto slash = path.find_last_of ('/');
+	std::string id = slash == std::string::npos ? path : path.substr (slash + 1);
+	if (!id.empty ()) {
+	    workshopIds.push_back (id);
+	}
+    };
+    for (int i = 1; i < argc; i++) {
+	const std::string arg = argv[i];
+	if ((arg == "--bg" || arg == "-b") && i + 1 < argc) {
+	    addId (argv[++i]);
+	} else if (arg.rfind ("--bg=", 0) == 0) {
+	    addId (arg.substr (5));
+	}
+    }
+
+    const CefRefPtr<CefApp> app = new CEF::SubprocessApp (workshopIds);
+    const int exitCode = CefExecuteProcess (main_args, app, nullptr);
+    // A helper process always terminates here; CefExecuteProcess returns its exit
+    // code (>= 0). Guard against -1 just in case so we still exit cleanly.
+    return exitCode < 0 ? 0 : exitCode;
+}
 
 // TODO: THIS IS USED TO GENERATE A RANDOM FOLDER FOR THE CHROME PROFILE, MAYBE A DIFFERENT APPROACH WOULD BE BETTER?
 namespace uuid {
@@ -50,42 +88,37 @@ WebBrowserContext::WebBrowserContext (WallpaperEngine::Application::WallpaperApp
 	this->m_wallpaperApplication.getContext ().getArgc (), this->m_wallpaperApplication.getContext ().getArgv ()
     );
 
-    // only care about app if the process is the main process
-    // we should maybe use a better lib for handling command line arguments instead
-    // or using C's version on some places and CefCommandLine on others
-    // TODO: ANOTHER THING TO TAKE CARE OF BEFORE MERGING
-    const CefRefPtr<CefCommandLine> commandLine = CefCommandLine::CreateCommandLine ();
-
-    commandLine->InitFromArgv (main_args.argc, main_args.argv);
-
-    if (!commandLine->HasSwitch ("type")) {
-	this->m_browserApplication = new CEF::BrowserApp (wallpaperApplication);
-    } else {
-	this->m_browserApplication = new CEF::SubprocessApp (wallpaperApplication);
-    }
-
-    // this blocks for anything not-main-thread
-    const int exit_code = CefExecuteProcess (main_args, this->m_browserApplication, nullptr);
-
-    // this is needed to kill subprocesses after they're done
-    if (exit_code >= 0) {
-	// Sub proccess has endend, so exit
-	exit (exit_code);
-    }
+    // This is only ever reached by the browser process: CEF helper processes are
+    // detected by their --type switch and handed off in executeSubprocess() at the
+    // top of main(). So we always create the browser app and never call
+    // CefExecuteProcess here — invoking it in the browser put content's ICU loader
+    // into "child" mode, making it expect the data via a (never-passed) fd and fail
+    // with "Invalid file descriptor to ICU data received".
+    this->m_browserApplication = new CEF::BrowserApp (wallpaperApplication);
 
     // Configurate Chromium
     CefSettings settings;
     std::string cache_path = (std::filesystem::temp_directory_path () / uuid::generate_uuid_v4 ()).string ();
-    // CefString(&settings.locales_dir_path) = "OffScreenCEF/godot/locales";
-    // CefString(&settings.resources_dir_path) = "OffScreenCEF/godot/";
-    // CefString(&settings.framework_dir_path) = "OffScreenCEF/godot/";
-    // CefString(&settings.cache_path) = "OffScreenCEF/godot/";
-    //  CefString(&settings.browser_subprocess_path) = "path/to/client"
+
+    // Point CEF at the directory holding its resources (icudtl.dat, *.pak, locales/).
+    // Without these, subprocesses fail to load ICU ("Invalid file descriptor to ICU
+    // data received") and web wallpapers crash. They sit next to the executable.
+    char proc_path[4096];
+    const ssize_t proc_len = readlink ("/proc/self/exe", proc_path, sizeof (proc_path) - 1);
+    if (proc_len > 0) {
+	proc_path[proc_len] = '\0';
+	const std::string exe_dir = std::filesystem::path (proc_path).parent_path ().string ();
+	CefString (&settings.resources_dir_path) = exe_dir;
+	CefString (&settings.locales_dir_path) = exe_dir + "/locales";
+    }
+
     cef_string_utf8_to_utf16 (cache_path.c_str (), cache_path.length (), &settings.root_cache_path);
     settings.windowless_rendering_enabled = true;
-#if defined(CEF_NO_SANDBOX)
+    // Run without the Chromium sandbox. A wallpaper renders local, trusted content,
+    // and the sandbox's fd remapping is what breaks ICU-data loading here ("Invalid
+    // file descriptor to ICU data received"). Disabling it lets every process read
+    // icudtl.dat from resources_dir_path directly.
     settings.no_sandbox = true;
-#endif
 
     // spawns two new processess
 

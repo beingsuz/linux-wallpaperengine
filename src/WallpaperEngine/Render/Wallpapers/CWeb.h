@@ -5,7 +5,9 @@
 #include <glm/glm.hpp>
 
 #include <algorithm>
+#include <future>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -42,6 +44,24 @@ protected:
     const Web& getWeb () const { return *this->getWallpaperData ().as<Web> (); }
 
     friend class CWallpaper;
+
+private:
+    // Wallpaper Engine web API bridge (browser side): feeds the injected
+    // window.wallpaper* listeners with live audio, media (via playerctl/MPRIS) and
+    // the wallpaper's properties, by calling the page's __wp* entry points.
+    void pushBridgeData ();
+    struct MediaInfo {
+        bool available = false;
+        int state = 0; // 0 stopped, 1 playing, 2 paused
+        std::string title, artist, artUrl;
+        double position = 0, duration = 0;
+    };
+    static std::optional<MediaInfo> pollMedia ();
+    std::future<std::optional<MediaInfo>> m_mediaFuture;
+    MediaInfo m_media;
+    std::string m_lastArtSent;
+    bool m_propertiesSent = false;
+    uint64_t m_frame = 0;
 
 private:
     WallpaperEngine::WebBrowser::WebBrowserContext& m_browserContext;

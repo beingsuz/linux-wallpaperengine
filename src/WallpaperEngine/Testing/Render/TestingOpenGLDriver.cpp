@@ -92,7 +92,8 @@ glm::ivec2 TestingOpenGLDriver::getFramebufferSize () const {
 
 uint32_t TestingOpenGLDriver::getFrameCounter () const { return this->m_frameCounter; }
 void TestingOpenGLDriver::dispatchEventQueue () {
-    static float startTime, endTime, minimumTime = 1.0f / this->m_context.settings.render.maximumFPS;
+    static float startTime, endTime;
+    const float minimumTime = 1.0f / std::max (1, this->m_context.settings.render.maximumFPS);
     // get the start time of the frame
     startTime = this->getRenderTime ();
     // clear the screen

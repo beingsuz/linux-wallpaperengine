@@ -309,6 +309,8 @@ set(COMMON_SOURCES
 
     src/WallpaperEngine/Application/ApplicationContext.cpp
     src/WallpaperEngine/Application/ApplicationContext.h
+    src/WallpaperEngine/Application/ControlSocket.cpp
+    src/WallpaperEngine/Application/ControlSocket.h
     src/WallpaperEngine/Application/WallpaperApplication.cpp
     src/WallpaperEngine/Application/WallpaperApplication.h
 
@@ -675,6 +677,12 @@ target_include_directories(linux-wallpaperengine-lib PUBLIC
 
 COPY_FILES(linux-wallpaperengine-lib "${CEF_BINARY_FILES}" "${CEF_BINARY_DIR}" "${TARGET_OUTPUT_DIRECTORY}")
 COPY_FILES(linux-wallpaperengine-lib "${CEF_RESOURCE_FILES}" "${CEF_RESOURCE_DIR}" "${TARGET_OUTPUT_DIRECTORY}")
+# Chromium locates icudtl.dat (and the .pak files) via DIR_ASSETS, which resolves
+# to the directory libcef.so is actually loaded from. With the CEF Release dir
+# ahead of the output dir on the runpath, libcef.so loads from CEF_BINARY_DIR, so
+# the resources must live there too — otherwise ICU fails to load in the browser
+# process ("Invalid file descriptor to ICU data received") and web wallpapers die.
+COPY_FILES(linux-wallpaperengine-lib "${CEF_RESOURCE_FILES}" "${CEF_RESOURCE_DIR}" "${CEF_BINARY_DIR}")
 # remove the vulkan lib as chromium includes a broken libvulkan.so.1 with it
 file(REMOVE "${CEF_BINARY_DIR}/libvulkan.so.1")
 set_target_properties(linux-wallpaperengine-lib PROPERTIES

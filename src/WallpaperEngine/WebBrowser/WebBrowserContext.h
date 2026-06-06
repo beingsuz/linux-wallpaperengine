@@ -18,6 +18,15 @@ public:
     explicit WebBrowserContext (WallpaperEngine::Application::WallpaperApplication& wallpaperApplication);
     ~WebBrowserContext ();
 
+    /**
+     * Entry point for CEF helper (subprocess) processes. Must be called at the very
+     * top of main(), before any other initialisation, so the inherited ICU-data
+     * file descriptor is still valid when CEF reads it. Registers the wp<workshopId>
+     * schemes parsed from argv's --bg paths and hands off to CefExecuteProcess.
+     * Returns the process exit code (the caller should return it from main()).
+     */
+    static int executeSubprocess (int argc, char* argv[]);
+
 private:
     CefRefPtr<CefApp> m_browserApplication = nullptr;
     CefRefPtr<CefCommandLine> m_commandLine = nullptr;
