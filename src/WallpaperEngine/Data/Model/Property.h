@@ -91,7 +91,9 @@ public:
 
     using Property::update;
     void update (const std::string& value, UpdateSource source) override {
-	this->update (ColorBuilder::parse (value), source);
+	// Property colors are always 0..1 floats in Wallpaper Engine's convention;
+	// force float parsing so values like "1 1 1" become white, not near-black.
+	this->update (ColorBuilder::parse (value, 1.0f, true), source);
     }
 
     [[nodiscard]] std::string dump () const override {

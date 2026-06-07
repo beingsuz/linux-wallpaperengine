@@ -11,7 +11,7 @@ const WallpaperEngine::Data::Model::Color WallpaperEngine::Data::Builders::Color
     = WallpaperEngine::Data::Model::Color (0.0f, 0.0f, 0.0f, 1.0f);
 
 WallpaperEngine::Data::Model::Color
-WallpaperEngine::Data::Builders::ColorBuilder::parse (const std::string& value, float alpha) {
+WallpaperEngine::Data::Builders::ColorBuilder::parse (const std::string& value, float alpha, bool forceFloat) {
     auto copy = value;
 
     // replace the actual separators with spaces to normalize them
@@ -55,7 +55,7 @@ WallpaperEngine::Data::Builders::ColorBuilder::parse (const std::string& value, 
 	throw std::invalid_argument ("Invalid color value");
     }
 
-    if (copy.find ('.') == std::string::npos) {
+    if (!forceFloat && copy.find ('.') == std::string::npos) {
 	const auto final = vectorSize == 3 ? glm::ivec4 (VectorBuilder::parse<glm::ivec3> (copy), alpha * 255)
 					   : VectorBuilder::parse<glm::ivec4> (copy);
 

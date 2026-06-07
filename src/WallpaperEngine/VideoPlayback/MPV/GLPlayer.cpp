@@ -104,6 +104,14 @@ void GLPlayer::setVolume (double volume) {
     }
 }
 
+void GLPlayer::setSpeed (double speed) {
+    this->m_speed = speed <= 0.0 ? 1.0 : speed;
+
+    if (this->m_handle) {
+	mpv_set_property (this->m_handle, "speed", MPV_FORMAT_DOUBLE, &this->m_speed);
+    }
+}
+
 void GLPlayer::setPaused () {
     this->m_paused = true;
 

@@ -17,6 +17,10 @@ public:
      */
     static const Model::Color Black;
 
-    static WallpaperEngine::Data::Model::Color parse (const std::string& value, float alpha = 1.0f);
+    // forceFloat: when true, the value is always interpreted as 0..1 floats even
+    // without a decimal point. Used for property colors (e.g. "1 1 1" = white),
+    // which would otherwise be misread as 0..255 integers (=> near-black).
+    static WallpaperEngine::Data::Model::Color
+    parse (const std::string& value, float alpha = 1.0f, bool forceFloat = false);
 };
 }

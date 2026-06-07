@@ -61,6 +61,18 @@ void CVideo::setPause (bool newState) {
     }
 }
 
+void CVideo::setAudioVolume (int volume) {
+    if (this->m_player) {
+	this->m_player->setVolume (volume * 100.0 / 128.0);
+    }
+}
+
+void CVideo::setPlaybackSpeed (float speed) {
+    if (this->m_player) {
+	this->m_player->setSpeed (speed);
+    }
+}
+
 int CVideo::getWidth () const { return this->m_player ? this->m_player->getWidth () : 16; }
 
 int CVideo::getHeight () const { return this->m_player ? this->m_player->getHeight () : 16; }

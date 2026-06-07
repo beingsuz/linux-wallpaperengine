@@ -25,8 +25,12 @@ SceneUniquePtr WallpaperParser::parseScene (const JSON& file, Project& project) 
     const auto scene = JSON::parse (project.assetLocator->readString (file));
     const auto camera = scene.require ("camera", "Scenes must have a camera section");
     const auto general = scene.require ("general", "Scenes must have a general section");
-    const auto projection
-	= general.require ("orthogonalprojection", "General section must have orthogonal projection info");
+    // Some scenes ship "orthogonalprojection": null (or omit width/height),
+    // expecting the projection to be auto-sized to the screen. Treat any of
+    // those cases as auto instead of throwing "Projection must have a width".
+    const auto projectionOpt = general.optional ("orthogonalprojection");
+    const bool projectionAuto =
+	!projectionOpt.has_value () || projectionOpt->optional ("auto", false);
     const auto objects = scene.require ("objects", "Scenes must have an objects section");
     const auto& properties = project.properties;
 
@@ -69,9 +73,9 @@ SceneUniquePtr WallpaperParser::parseScene (const JSON& file, Project& project) 
                     .up = camera.require <glm::vec3> ("up", "Camera must have an up position"),
                 },
                 .projection = {
-                    .width  = projection.optional ("auto", false) ? 0 : projection.require <int> ("width",  "Projection must have a width"),
-                    .height = projection.optional ("auto", false) ? 0 : projection.require <int> ("height", "Projection must have a height"),
-                    .isAuto = projection.optional ("auto", false),
+                    .width  = projectionAuto ? 0 : projectionOpt->optional <int> ("width",  0),
+                    .height = projectionAuto ? 0 : projectionOpt->optional <int> ("height", 0),
+                    .isAuto = projectionAuto,
                     .nearz = camera.user ("nearz", properties, 0.0f),
                     .farz = camera.user ("farz", properties, 1000.0f),
                     .fov = camera.user ("fov", properties, 50.0f)
