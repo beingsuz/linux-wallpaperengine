@@ -1,5 +1,7 @@
 #include "WallpaperApplication.h"
 
+#include <sstream>
+
 #include "Steam/FileSystem/FileSystem.h"
 #include "WallpaperEngine/Application/ApplicationState.h"
 #include "WallpaperEngine/Assets/AssetLoadException.h"
@@ -424,42 +426,10 @@ void WallpaperApplication::advancePlaylist (
 
     bool loaded = false;
 
-    try {
-	if (!this->makeAnyViewportCurrent ()) {
-	    sLog.error ("Cannot switch playlist on ", screen, ": no active viewport");
-	    throw std::runtime_error ("No viewport available");
-	}
-
-	auto project = this->loadBackground (nextPath.string ());
-
-	this->setupPropertiesForProject (*project);
-	this->ensureBrowserForProject (*project);
-
-	this->m_backgrounds[screen] = std::move (project);
-
-	const auto scalingIt = this->m_context.settings.general.screenScalings.find (screen);
-	const auto clampIt = this->m_context.settings.general.screenClamps.find (screen);
-	const auto scaling = scalingIt != this->m_context.settings.general.screenScalings.end ()
-	    ? scalingIt->second
-	    : this->m_context.settings.render.window.scalingMode;
-	const auto clamp = clampIt != this->m_context.settings.general.screenClamps.end ()
-	    ? clampIt->second
-	    : this->m_context.settings.render.window.clamp;
-
-	if (this->m_renderContext) {
-	    this->m_renderContext->setWallpaper (
-		screen,
-		WallpaperEngine::Render::CWallpaper::fromWallpaper (
-		    *this->m_backgrounds[screen]->wallpaper, *this->m_renderContext, *this->m_audioContext,
-		    this->m_browserContext.get (), scaling, clamp
-		)
-	    );
-	}
-
-	this->m_context.settings.general.screenBackgrounds[screen] = nextPath;
-	loaded = true;
-    } catch (const std::exception& e) {
-	sLog.error ("Failed to advance playlist on ", screen, ": ", e.what ());
+    if (this->makeAnyViewportCurrent ()) {
+	loaded = this->setBackground (screen, nextPath.string ());
+    } else {
+	sLog.error ("Cannot switch playlist on ", screen, ": no active viewport");
     }
 
     if (!loaded) {
@@ -687,16 +657,16 @@ void WallpaperApplication::setupOutput () {
 }
 
 void WallpaperApplication::setupAudio () {
-    // ensure audioprocessing is required by any background, and we have it enabled
-    const bool audioProcessingRequired = std::ranges::any_of (
-	this->m_backgrounds, [] (const std::pair<const std::string, ProjectUniquePtr>& pair) -> bool {
-	    return pair.second->supportsAudioProcessing;
-	}
-    );
-
-    if (audioProcessingRequired && this->m_context.settings.audio.audioprocessing) {
+    // Capture audio whenever audio processing is enabled — not only when the
+    // INITIAL background needs it. With the control socket, backgrounds are
+    // swapped live without re-running setup, so a wallpaper switched in later
+    // must still get a real recorder (otherwise audio-reactive elements get no
+    // data and never react).
+    if (this->m_context.settings.audio.audioprocessing) {
 	this->m_audioRecorder
-	    = std::make_unique<WallpaperEngine::Audio::Drivers::Recorders::PulseAudioPlaybackRecorder> ();
+	    = std::make_unique<WallpaperEngine::Audio::Drivers::Recorders::PulseAudioPlaybackRecorder> (
+		this->m_context.settings.audio.device
+	    );
     } else {
 	this->m_audioRecorder = std::make_unique<WallpaperEngine::Audio::Drivers::Recorders::PlaybackRecorder> ();
     }
@@ -828,6 +798,16 @@ void WallpaperApplication::setup () {
     this->prepareOutputs ();
     this->setupOpenGLDebugging ();
 
+    // Apply runtime state that isn't baked in at wallpaper creation (video
+    // volume/mute and playback speed) so the very first frame already honors it.
+    this->applyAudioVolume ();
+    this->applyPlaybackSpeed ();
+
+    // Open the live control socket if requested
+    if (!this->m_context.settings.controlSocket.empty ()) {
+	this->m_controlSocket = std::make_unique<ControlSocket> (this->m_context.settings.controlSocket);
+    }
+
     if (this->m_context.settings.general.dumpStructure) {
 	auto prettyPrinter = Data::Dumpers::StringPrinter ();
 
@@ -853,6 +833,11 @@ void WallpaperApplication::setup () {
 }
 
 void WallpaperApplication::render () {
+    // Service any live control-socket requests before rendering the frame
+    if (this->m_controlSocket) {
+	this->m_controlSocket->poll (*this);
+    }
+
     static time_t seconds;
     static struct tm* timeinfo;
 
@@ -883,8 +868,15 @@ void WallpaperApplication::render () {
 
 	// keep track of the previous frame's time
 	g_TimeLast = g_Time;
-	// calculate the current time value
-	g_Time = m_videoDriver->getRenderTime ();
+	// calculate the current time value, scaled by the configured playback speed
+	// (1.0 = normal). Scaling the clock makes scenes/particles animate faster or
+	// slower without affecting the render FPS.
+	{
+	    float playbackSpeed = this->m_context.settings.render.playbackSpeed;
+	    if (playbackSpeed <= 0.0f)
+		playbackSpeed = 1.0f;
+	    g_Time = m_videoDriver->getRenderTime () * playbackSpeed;
+	}
 	// update audio recorder
 	m_audioDriver->update ();
 	// update the media source
@@ -998,3 +990,163 @@ void WallpaperApplication::setDestinationFramebuffer (GLuint framebuffer) {
 }
 
 GLuint WallpaperApplication::getDestinationFramebuffer () const { return this->m_destinationFramebuffer; }
+
+bool WallpaperApplication::setBackground (const std::string& screen, const std::string& path) {
+    try {
+	auto project = this->loadBackground (path);
+	this->setupPropertiesForProject (*project);
+	this->ensureBrowserForProject (*project);
+	this->m_backgrounds[screen] = std::move (project);
+
+	const auto scalingIt = this->m_context.settings.general.screenScalings.find (screen);
+	const auto clampIt = this->m_context.settings.general.screenClamps.find (screen);
+	const auto scaling = scalingIt != this->m_context.settings.general.screenScalings.end ()
+	    ? scalingIt->second
+	    : this->m_context.settings.render.window.scalingMode;
+	const auto clamp = clampIt != this->m_context.settings.general.screenClamps.end ()
+	    ? clampIt->second
+	    : this->m_context.settings.render.window.clamp;
+
+	if (this->m_renderContext) {
+	    this->m_renderContext->setWallpaper (
+		screen,
+		WallpaperEngine::Render::CWallpaper::fromWallpaper (
+		    *this->m_backgrounds[screen]->wallpaper, *this->m_renderContext, *this->m_audioContext,
+		    this->m_browserContext.get (), scaling, clamp
+		)
+	    );
+	}
+
+	this->m_context.settings.general.screenBackgrounds[screen] = path;
+	this->applyAudioVolume ();    // keep the new wallpaper in sync with volume/mute
+	this->applyPlaybackSpeed ();  // ...and with playback speed
+	return true;
+    } catch (const std::exception& e) {
+	sLog.error ("setBackground failed on ", screen, ": ", e.what ());
+	return false;
+    }
+}
+
+bool WallpaperApplication::setProperty (const std::string& screen, const std::string& key, const std::string& value) {
+    const auto bg = this->m_backgrounds.find (screen);
+    if (bg == this->m_backgrounds.end ())
+	return false;
+
+    // Only accept keys the current wallpaper actually declares.
+    if (bg->second->properties.find (key) == bg->second->properties.end ())
+	return false;
+
+    // Record the override and rebuild the wallpaper in-process. A runtime
+    // update() alone doesn't reach the shaders/materials (values are bound at
+    // load), so we reload the screen — fast and flash-free since the GL context
+    // and process are kept alive.
+    this->m_context.settings.general.properties[key] = value;
+
+    const auto it = this->m_context.settings.general.screenBackgrounds.find (screen);
+    if (it == this->m_context.settings.general.screenBackgrounds.end ())
+	return false;
+
+    return this->setBackground (screen, it->second.string ());
+}
+
+bool WallpaperApplication::setScreenScaling (const std::string& screen, const std::string& mode) {
+    using WallpaperEngine::Render::WallpaperState;
+    WallpaperState::TextureUVsScaling value;
+    if (mode == "stretch")
+	value = WallpaperState::TextureUVsScaling::StretchUVs;
+    else if (mode == "fit")
+	value = WallpaperState::TextureUVsScaling::ZoomFitUVs;
+    else if (mode == "fill")
+	value = WallpaperState::TextureUVsScaling::ZoomFillUVs;
+    else if (mode == "default")
+	value = WallpaperState::TextureUVsScaling::DefaultUVs;
+    else
+	return false;
+
+    this->m_context.settings.general.screenScalings[screen] = value;
+    const auto it = this->m_context.settings.general.screenBackgrounds.find (screen);
+    return it != this->m_context.settings.general.screenBackgrounds.end () && this->setBackground (screen, it->second.string ());
+}
+
+bool WallpaperApplication::setScreenClamp (const std::string& screen, const std::string& mode) {
+    TextureFlags value;
+    if (mode == "clamp")
+	value = TextureFlags_ClampUVs;
+    else if (mode == "border")
+	value = TextureFlags_ClampUVsBorder;
+    else if (mode == "repeat")
+	value = TextureFlags_NoFlags;
+    else
+	return false;
+
+    this->m_context.settings.general.screenClamps[screen] = value;
+    const auto it = this->m_context.settings.general.screenBackgrounds.find (screen);
+    return it != this->m_context.settings.general.screenBackgrounds.end () && this->setBackground (screen, it->second.string ());
+}
+
+void WallpaperApplication::applyPlaybackSpeed () {
+    if (!this->m_renderContext)
+	return;
+
+    for (const auto& [screen, wallpaper] : this->m_renderContext->getWallpapers ()) {
+	wallpaper->setPlaybackSpeed (this->m_context.settings.render.playbackSpeed);
+    }
+}
+
+void WallpaperApplication::setPlaybackSpeed (float speed) {
+    this->m_context.settings.render.playbackSpeed = speed <= 0.0f ? 1.0f : speed;
+    this->applyPlaybackSpeed (); // media (video) wallpapers; scenes use the scaled clock
+}
+
+void WallpaperApplication::applyAudioVolume () {
+    if (!this->m_renderContext)
+	return;
+
+    const int volume = this->m_context.settings.audio.enabled ? this->m_context.settings.audio.volume : 0;
+    for (const auto& [screen, wallpaper] : this->m_renderContext->getWallpapers ()) {
+	wallpaper->setAudioVolume (volume);
+    }
+}
+
+void WallpaperApplication::setVolume (int volume) {
+    this->m_context.settings.audio.volume = volume;
+    this->applyAudioVolume ();
+}
+
+void WallpaperApplication::setMute (bool muted) {
+    this->m_context.settings.audio.enabled = !muted;
+    this->applyAudioVolume ();
+}
+
+bool WallpaperApplication::setOption (const std::string& key, const std::string& value) {
+    auto& settings = this->m_context.settings;
+    const bool on = value == "true" || value == "1";
+
+    if (key == "fps") {
+	settings.render.maximumFPS = std::max (1, std::atoi (value.c_str ()));
+    } else if (key == "noautomute") {
+	settings.audio.automute = !on;
+    } else if (key == "disablemouse") {
+	settings.mouse.enabled = !on;
+	this->m_context.state.mouse.enabled = !on;
+    } else if (key == "disableparallax") {
+	settings.mouse.disableparallax = on;
+    } else if (key == "nofullscreenpause") {
+	settings.render.pauseOnFullscreen = !on;
+    } else {
+	return false;
+    }
+
+    return true;
+}
+
+std::string WallpaperApplication::controlStatus () const {
+    std::stringstream ss;
+    ss << "speed=" << this->m_context.settings.render.playbackSpeed << "\n";
+    for (const auto& [screen, project] : this->m_backgrounds) {
+	const auto it = this->m_context.settings.general.screenBackgrounds.find (screen);
+	ss << "screen=" << screen << " bg="
+	   << (it != this->m_context.settings.general.screenBackgrounds.end () ? it->second.string () : "") << "\n";
+    }
+    return ss.str ();
+}

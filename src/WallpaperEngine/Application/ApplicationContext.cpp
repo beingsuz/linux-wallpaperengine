@@ -493,6 +493,22 @@ void ApplicationContext::loadSettingsFromArgv () {
 	.default_value (30)
 	.store_into (this->settings.render.maximumFPS);
 
+    performanceGroup.add_argument ("--playback-speed", "--clock")
+	.help ("Playback speed multiplier for animations (1.0 = normal, 0.5 = half speed, 2.0 = double)")
+	.scan<'g', float> ()
+	.default_value (1.0f)
+	.store_into (this->settings.render.playbackSpeed);
+
+    program.add_argument ("--control-socket")
+	.help ("Path to a Unix socket for live control (swap background, set properties/speed) without restarting")
+	.default_value (std::string (""))
+	.store_into (this->settings.controlSocket);
+
+    program.add_argument ("--audio-device")
+	.help ("PulseAudio/PipeWire source to capture for audio-reactive wallpapers (default: system default output monitor)")
+	.default_value (std::string (""))
+	.store_into (this->settings.audio.device);
+
     performanceGroup.add_argument ("--no-fullscreen-pause")
 	.help ("Prevents the background pausing when an app is fullscreen")
 	.flag ()
@@ -663,8 +679,11 @@ void ApplicationContext::loadSettingsFromArgv () {
 	}
 
 	this->settings.audio.volume = std::max (0, std::min (this->settings.audio.volume, 128));
+	// Cap the screenshot delay. Allow a generous maximum so slow-loading
+	// wallpapers (web/three.js scenes that fetch assets) can be captured after
+	// their first real frame instead of while still blank.
 	this->settings.screenshot.delay
-	    = std::max<uint32_t> (0, std::min<uint32_t> (this->settings.screenshot.delay, 5));
+	    = std::max<uint32_t> (0, std::min<uint32_t> (this->settings.screenshot.delay, 600));
 
 	// use std::cout on this in case logging is disabled, this way it's easy to look at what is running
 	std::stringbuf buffer;

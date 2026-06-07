@@ -75,6 +75,8 @@ public:
     };
 
     struct {
+	/** Path to a Unix control socket for live changes (empty = disabled) */
+	std::string controlSocket;
 	/**
 	 * General settings
 	 */
@@ -113,6 +115,8 @@ public:
 	    WINDOW_MODE mode;
 	    /** Maximum FPS */
 	    int maximumFPS;
+	    /** Playback speed multiplier for animations (1.0 = normal) */
+	    float playbackSpeed;
 	    /** Indicates if pausing should happen when something goes fullscreen */
 	    bool pauseOnFullscreen;
 	    /**
@@ -160,6 +164,8 @@ public:
 	    bool automute;
 	    /** If audio processing can be enabled or not */
 	    bool audioprocessing;
+	    /** Source to capture for audio-reactive wallpapers (empty = default) */
+	    std::string device;
 	} audio;
 
 	/**
@@ -225,6 +231,7 @@ public:
             .volume = 15,
             .automute = true,
             .audioprocessing = true,
+            .device = "",
         },
         .mouse = {
             .enabled = true,

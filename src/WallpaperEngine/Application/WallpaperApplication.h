@@ -4,6 +4,7 @@
 #include <random>
 
 #include "WallpaperEngine/Application/ApplicationContext.h"
+#include "WallpaperEngine/Application/ControlSocket.h"
 #include "WallpaperEngine/Assets/AssetLocator.h"
 
 #include "WallpaperEngine/Render/CWallpaper.h"
@@ -80,6 +81,20 @@ public:
      * Gets the currently set destination framebuffer for rendering. If not set, returns 0 (the default framebuffer).
      */
     [[nodiscard]] GLuint getDestinationFramebuffer () const;
+
+    /**
+     * Live control operations (used by the control socket) — apply changes to a
+     * running process without restarting it.
+     */
+    bool setBackground (const std::string& screen, const std::string& path);
+    bool setProperty (const std::string& screen, const std::string& key, const std::string& value);
+    bool setScreenScaling (const std::string& screen, const std::string& mode);
+    bool setScreenClamp (const std::string& screen, const std::string& mode);
+    void setPlaybackSpeed (float speed);
+    void setVolume (int volume);
+    void setMute (bool muted);
+    bool setOption (const std::string& key, const std::string& value);
+    [[nodiscard]] std::string controlStatus () const;
 
 private:
     /**
@@ -160,6 +175,10 @@ private:
     std::vector<std::size_t> buildPlaylistOrder (const ApplicationContext::PlaylistDefinition& definition);
     void ensureBrowserForProject (const Project& project);
     bool makeAnyViewportCurrent () const;
+    /** Applies the current volume/mute state to every loaded wallpaper */
+    void applyAudioVolume ();
+    /** Applies the current playback speed to every loaded wallpaper */
+    void applyPlaybackSpeed ();
 
     /** The application context that contains the current app settings */
     ApplicationContext& m_context;
@@ -176,6 +195,7 @@ private:
     std::unique_ptr<WallpaperEngine::Render::Drivers::Detectors::FullScreenDetector> m_fullScreenDetector = nullptr;
     std::unique_ptr<WallpaperEngine::WebBrowser::WebBrowserContext> m_browserContext = nullptr;
     std::unique_ptr<WallpaperEngine::Media::MediaSource> m_mediaSource = nullptr;
+    std::unique_ptr<ControlSocket> m_controlSocket = nullptr;
     std::mt19937 m_playlistRng { std::random_device {}() };
     bool m_isPaused = false;
     bool m_screenShotTaken = false;

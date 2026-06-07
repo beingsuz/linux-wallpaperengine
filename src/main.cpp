@@ -4,6 +4,9 @@
 #include "WallpaperEngine/Application/ApplicationContext.h"
 #include "WallpaperEngine/Application/WallpaperApplication.h"
 #include "WallpaperEngine/Logging/Log.h"
+#include "WallpaperEngine/WebBrowser/WebBrowserContext.h"
+
+#include <cstring>
 
 WallpaperEngine::Application::WallpaperApplication* app;
 
@@ -21,6 +24,18 @@ void initLogging () {
 }
 
 int main (int argc, char* argv[]) {
+    // CEF spawns helper processes (render/gpu/zygote/utility) by re-launching THIS
+    // binary with a "--type=..." switch. They MUST hand off to CEF before anything
+    // else runs: any file IO or GL/Wayland init first closes the inherited ICU-data
+    // file descriptor, after which the helper aborts ("Invalid file descriptor to
+    // ICU data received") and takes web wallpapers down with it. Do it before
+    // logging, argument parsing and background loading.
+    for (int i = 1; i < argc; i++) {
+	if (strncmp (argv[i], "--type=", 7) == 0) {
+	    return WallpaperEngine::WebBrowser::WebBrowserContext::executeSubprocess (argc, argv);
+	}
+    }
+
     try {
 	// if type parameter is specified, this is a subprocess, so no logging should be enabled from our side
 	bool enableLogging = true;
