@@ -259,11 +259,11 @@ std::optional<CWeb::MediaInfo> CWeb::pollMedia () {
     }
     p.push_back (line.substr (pos));
     m.available = true;
-    const std::string status = p.size () > 0 ? p[0] : "";
+    const std::string status = !p.empty () ? p[0] : "";
     m.title = p.size () > 1 ? p[1] : "";
     m.artist = p.size () > 2 ? p[2] : "";
-    m.duration = (p.size () > 3 ? atof (p[3].c_str ()) : 0.0) / 1000000.0;
-    m.position = (p.size () > 4 ? atof (p[4].c_str ()) : 0.0) / 1000000.0;
+    m.duration = (p.size () > 3 ? std::strtod (p[3].c_str (), nullptr) : 0.0) / 1000000.0;
+    m.position = (p.size () > 4 ? std::strtod (p[4].c_str (), nullptr) : 0.0) / 1000000.0;
     m.artUrl = p.size () > 5 ? p[5] : "";
     m.state = status == "Playing" ? 1 : (status == "Paused" ? 2 : 0);
     return m;

@@ -306,8 +306,8 @@ void CModel::render () {
     // Snapshot the scene-so-far into the reflection copy FBO so generic3's REFLECTION samples
     // a stable image instead of feedback-looping on the scene FBO it's drawing into.
     if (this->m_reflectionFBO != nullptr) {
-	const GLint w = static_cast<GLint> (sceneFBO->getRealWidth ());
-	const GLint h = static_cast<GLint> (sceneFBO->getRealHeight ());
+	const auto w = static_cast<GLint> (sceneFBO->getRealWidth ());
+	const auto h = static_cast<GLint> (sceneFBO->getRealHeight ());
 	glBindFramebuffer (GL_READ_FRAMEBUFFER, sceneFBO->getFramebuffer ());
 	glBindFramebuffer (GL_DRAW_FRAMEBUFFER, this->m_reflectionFBO->getFramebuffer ());
 	glBlitFramebuffer (0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
