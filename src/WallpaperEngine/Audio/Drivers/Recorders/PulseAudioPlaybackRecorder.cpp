@@ -225,27 +225,6 @@ PulseAudioPlaybackRecorder::~PulseAudioPlaybackRecorder () {
 void PulseAudioPlaybackRecorder::update () {
     pa_mainloop_iterate (this->m_mainloop, 0, nullptr);
 
-    // DEBUG (WPE_AUDIO_DEBUG=1): periodically log capture activity to a file so
-    // we can tell whether samples are actually arriving from the chosen source.
-    if (std::getenv ("WPE_AUDIO_DEBUG")) {
-	static int dbg = 0;
-	if (++dbg % 60 == 0) {
-	    float peak = 0.0f;
-	    double sumSq = 0.0;
-	    for (int i = 0; i < 64; i++)
-		peak = std::max (peak, this->audio64[i]);
-	    for (int i = 0; i < WAVE_BUFFER_SIZE; i++) {
-		const double d = (int) this->m_captureData.audioBuffer[i] - 128;
-		sumSq += d * d;
-	    }
-	    const double rms = std::sqrt (sumSq / WAVE_BUFFER_SIZE);
-	    if (FILE* f = fopen ("/tmp/we-audio-debug.log", "a")) {
-		fprintf (f, "rms=%.2f peakFFT=%.4f\n", rms, peak);
-		fclose (f);
-	    }
-	}
-    }
-
     // interpolate current values to the destination
     for (int i = 0; i < 64; i++) {
 	this->audio64[i] = movetowards (this->audio64[i], this->m_FFTdestination64[i], 0.3f);

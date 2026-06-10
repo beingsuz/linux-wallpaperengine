@@ -267,7 +267,11 @@ ObjectParser::parseModel (const JSON& it, const Project& project, ObjectData bas
 		offset += vertexBytes;
 
 		const int32_t indexBytes = readI32 ();
-		if (indexBytes <= 0 || offset + static_cast<size_t> (indexBytes) > data.size ()) {
+		// Indices are uint16_t, so the block size must be even — an odd value from a
+		// truncated/corrupt file would otherwise overflow the heap below (resize rounds
+		// down, memcpy copies the full indexBytes).
+		if (indexBytes <= 0 || (indexBytes % static_cast<int32_t> (sizeof (uint16_t))) != 0
+		    || offset + static_cast<size_t> (indexBytes) > data.size ()) {
 		    sLog.error ("Invalid index block in model mesh ", i, " of ", mesh);
 		    break;
 		}
