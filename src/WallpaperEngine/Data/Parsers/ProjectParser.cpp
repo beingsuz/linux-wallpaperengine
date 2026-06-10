@@ -17,7 +17,11 @@ ProjectUniquePtr ProjectParser::parse (const JSON& data, AssetLocatorUniquePtr c
     const auto general = data.optional ("general");
     const auto workshopId = data.optional ("workshopid");
     auto actualWorkshopId = std::to_string (--backgroundId);
-    auto type = data.require<std::string> ("type", "Project type missing");
+    // The declared "type" string is only a label in WE; the real decision is the main file's
+    // extension / URL scheme. Keep it as a fallback, but don't require it.
+    auto type = data.optional<std::string> ("type", "");
+    const auto fileValue = data.require ("file", "Project's main file missing");
+    const std::string fileName = fileValue.is_string () ? fileValue.template get<std::string> () : "";
 
     if (workshopId.has_value ()) {
 	if (workshopId->is_number ()) {
@@ -34,32 +38,68 @@ ProjectUniquePtr ProjectParser::parse (const JSON& data, AssetLocatorUniquePtr c
 
     auto result = std::make_unique<Project> (Project {
 	.title = data.require<std::string> ("title", "Project title missing"),
-	.type = parseType (type),
+	.type = parseType (type, fileName),
 	.workshopId = actualWorkshopId,
 	.supportsAudioProcessing = general.has_value () && general.value ().optional ("supportsaudioprocessing", false),
 	.properties = parseProperties (general),
 	.assetLocator = std::move (container),
     });
 
-    result->wallpaper = WallpaperParser::parse (data.require ("file", "Project's main file missing"), *result);
+    result->wallpaper = WallpaperParser::parse (fileValue, *result);
 
     return result;
 }
 
-Project::Type ProjectParser::parseType (const std::string& type) {
-    if (type == "scene") {
-	return Project::Type_Scene;
-    }
+Project::Type ProjectParser::parseType (const std::string& type, const std::string& file) {
+    // Wallpaper Engine decides the wallpaper kind from the main file's extension / URL scheme,
+    // NOT the declared "type" string (which it only stores as a label) — FUN_14011e530. Mirror
+    // that exactly: a scene ships a .json/.pkg file, a video a .mp4/..., web an .html (or a bare
+    // URL), an image a .png/..., an application an .exe. The declared string is only a fallback
+    // for an ambiguous/missing file.
+    std::string f = file;
+    std::ranges::transform (f, f.begin (), tolower);
 
-    if (type == "video") {
-	return Project::Type_Video;
-    }
-
-    if (type == "web") {
+    if (f.starts_with ("http://") || f.starts_with ("https://") || f.starts_with ("www.")) {
 	return Project::Type_Web;
     }
 
-    sLog.exception ("Unsupported project type ", type);
+    const auto dot = f.find_last_of ('.');
+    const std::string ext = dot != std::string::npos ? f.substr (dot + 1) : "";
+
+    if (ext == "json" || ext == "pkg") {
+	return Project::Type_Scene;
+    }
+    if (ext == "html" || ext == "htm") {
+	return Project::Type_Web;
+    }
+    if (ext == "mp4" || ext == "webm" || ext == "mkv" || ext == "avi" || ext == "mov" || ext == "m4v" || ext == "wmv") {
+	return Project::Type_Video;
+    }
+    if (ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "gif" || ext == "bmp" || ext == "webp") {
+	return Project::Type_Image;
+    }
+    if (ext == "exe") {
+	return Project::Type_Application;
+    }
+
+    // Ambiguous file (e.g. a bare URL with no scheme) — trust the declared type string.
+    if (type == "scene") {
+	return Project::Type_Scene;
+    }
+    if (type == "video") {
+	return Project::Type_Video;
+    }
+    if (type == "web") {
+	return Project::Type_Web;
+    }
+    if (type == "application") {
+	return Project::Type_Application;
+    }
+    if (type == "image") {
+	return Project::Type_Image;
+    }
+
+    sLog.exception ("Cannot determine project type from file '", file, "' (declared type '", type, "')");
 }
 
 Properties ProjectParser::parseProperties (const std::optional<JSON>& data) {

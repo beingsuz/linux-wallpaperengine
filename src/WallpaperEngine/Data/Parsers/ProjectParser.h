@@ -20,7 +20,7 @@ public:
     static ProjectUniquePtr parse (const JSON& data, AssetLocatorUniquePtr container);
 
 private:
-    static Project::Type parseType (const std::string& type);
+    static Project::Type parseType (const std::string& type, const std::string& file);
     static Properties parseProperties (const std::optional<JSON>& data);
 };
 } // namespace WallpaperEngine::Data::Parsers

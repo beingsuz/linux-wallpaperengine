@@ -916,6 +916,23 @@ void CImage::render () {
 	return;
     }
 
+    // Group/parent visibility propagates to children: if any ancestor layer is hidden (e.g. a style
+    // selector script toggled its container group off) this child is hidden too. Walk up the parent
+    // chain and bail if any ancestor's visibility is false. Objects without a parent (the common case,
+    // e.g. every Starscape layer) skip the loop entirely, so this is inert unless a group is involved.
+    for (auto parent = this->getObject ().parent; parent.has_value ();) {
+	const auto* parentObject = this->getScene ().getObject (parent.value ());
+	if (parentObject == nullptr) {
+	    break;
+	}
+	const auto& parentData = parentObject->getObject ();
+	if (parentData.groupVisible != nullptr && parentData.groupVisible->value != nullptr
+	    && !parentData.groupVisible->value->getBool ()) {
+	    return;
+	}
+	parent = parentData.parent;
+    }
+
     glColorMask (true, true, true, true);
 
     // Always update screen transform (handles rotation + parallax dynamically)

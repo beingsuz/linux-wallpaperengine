@@ -3,6 +3,7 @@
 #include "WallpaperEngine/Render/Objects/CParticle.h"
 #include "WallpaperEngine/Render/Objects/CSound.h"
 #include "WallpaperEngine/Render/Objects/CText.h"
+#include "WallpaperEngine/Scripting/ScriptableObject.h"
 
 #include "WallpaperEngine/Render/WallpaperState.h"
 
@@ -263,8 +264,12 @@ Render::CObject* CScene::dispatchObjectType (const Object& object) {
 
 	renderObject = new Objects::CParticle (*this, particleData);
     } else {
-	sLog.error ("Unknown object type, creating placeholder, empty object: ", object.id);
-	renderObject = new CObject (*this, object);
+	// No image/sound/text/particle/model: this is a transform "group" object (a container the
+	// scene/scripts parent other layers under). Create it as a ScriptableObject so its group
+	// transform + visibility are registered as script-drivable properties — a style-selector
+	// script (e.g. Makima's character toggle) flips a group's `visible`, and CImage propagates
+	// that to the group's children. A plain CObject can't be driven, so every style would show.
+	renderObject = new Scripting::ScriptableObject (*this, object);
     }
 
     try {

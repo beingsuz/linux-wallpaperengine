@@ -36,6 +36,10 @@ template <int components> struct VectorOpaqueContainer {
     VectorAdapter<components>& adapter;
     DynamicValue& value;
     uint32_t id;
+    // Adapter instance id, used by the finalizer to look the adapter up in the
+    // live registry instead of dereferencing `adapter`, which can dangle if this
+    // object is finalized during runtime teardown (after the adapter was reset).
+    uint32_t adapterId;
 };
 
 template <int components> auto vector_new () -> decltype (auto) {
@@ -386,7 +390,19 @@ JSValue vector_constructor (JSContext* ctx, JSValueConst new_target, int argc, J
 
     VEC_MAGIC_CHECK_EXCEPTION (container, components);
 
-    container->value.update (vector_get<components> (ctx, argv[0]), DynamicValue::UpdateSource::Initialization);
+    if (argc >= 2) {
+	// Per-component construction: new Vec3(x, y, z), new Vec2(x, y), etc.
+	auto components_value = vector_new<components> ();
+	for (int i = 0; i < components && i < argc; i++) {
+	    double c = 0.0;
+	    JS_ToFloat64 (ctx, &c, argv[i]);
+	    components_value[i] = static_cast<float> (c);
+	}
+	container->value.update (components_value, DynamicValue::UpdateSource::Initialization);
+    } else {
+	// Single arg: a scalar (broadcast) or another vector (copy).
+	container->value.update (vector_get<components> (ctx, argv[0]), DynamicValue::UpdateSource::Initialization);
+    }
 
     return result;
 }
@@ -403,9 +419,18 @@ template <int components> void vector_finalizer (JSRuntime* rt, JSValueConst val
 	return;
     }
 
-    // free container and the associated DynamicValue if temporal
+    // free the associated DynamicValue if temporal. This can run during runtime
+    // teardown (JS_FreeContext) AFTER the ScriptEngine destroyed the adapters —
+    // e.g. for vectors a script parked on a long-lived object (shared.camera).
+    // Resolve the adapter through the live registry by id rather than touching the
+    // stored reference (which would be dangling); if the adapter is already gone
+    // its m_values owned and freed the DynamicValue, so there is nothing to do.
     if (container->id != InvalidVectorInstanceId) {
-	container->adapter.free (container->id);
+	auto it = vectorAdapterInstances<components>.find (container->adapterId);
+
+	if (it != vectorAdapterInstances<components>.end ()) {
+	    it->second.free (container->id);
+	}
     }
 
     delete container;
@@ -835,7 +860,7 @@ VectorAdapter<components>::VectorAdapter (ScriptEngine& engine) :
     JS_DupValue (this->m_engine.getContext (), m_prototype);
 
     JSValue ctor = JS_NewCFunctionMagic (
-	this->m_engine.getContext (), vector_constructor<components>, this->m_name.c_str (), 1,
+	this->m_engine.getContext (), vector_constructor<components>, this->m_name.c_str (), components,
 	JS_CFUNC_constructor_magic, this->m_instanceId
     );
 
@@ -924,7 +949,9 @@ VectorAdapter<components>::VectorAdapter (ScriptEngine& engine) :
     );
 
     JS_SetClassProto (this->m_engine.getContext (), this->m_classId, m_prototype);
-    JS_FreeValue (this->m_engine.getContext (), ctor);
+    // Expose the constructor on globalThis so scripts can do `new Vec2(...)` / `new Vec3(...)`
+    // (Wallpaper Engine scripts rely on these globals). Takes ownership of `ctor`.
+    JS_SetPropertyStr (this->m_engine.getContext (), this->m_engine.getGlobalThis (), this->m_name.c_str (), ctor);
 }
 
 template <int components> VectorAdapter<components>::~VectorAdapter () {
@@ -946,6 +973,7 @@ template <int components> JSValue VectorAdapter<components>::instantiate (Dynami
 	    .adapter = *this,
 	    .value = value,
 	    .id = InvalidVectorInstanceId,
+	    .adapterId = this->m_instanceId,
 	}
     );
 
@@ -963,6 +991,7 @@ template <int components> JSValue VectorAdapter<components>::instantiate (Dynami
 	    .adapter = *this,
 	    .value = *value,
 	    .id = id,
+	    .adapterId = this->m_instanceId,
 	}
     );
 
@@ -982,6 +1011,7 @@ template <int components> JSValue VectorAdapter<components>::instantiate () {
 	    .adapter = *this,
 	    .value = *value,
 	    .id = id,
+	    .adapterId = this->m_instanceId,
 	}
     );
 

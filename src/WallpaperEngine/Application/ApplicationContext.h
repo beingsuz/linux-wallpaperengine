@@ -83,6 +83,8 @@ public:
 	struct {
 	    /** If the user requested a list of properties for the given background */
 	    bool onlyListProperties;
+	    /** Like onlyListProperties, but emits a single machine-readable JSON array (for tooling). */
+	    bool listPropertiesJson;
 	    /** If the user requested a dump of the background structure */
 	    bool dumpStructure;
 	    /** If the user requested the particles to be deactivated */
@@ -192,6 +194,7 @@ public:
     } settings = {
         .general = {
             .onlyListProperties = false,
+            .listPropertiesJson = false,
             .dumpStructure = false,
             .assets = "",
             .defaultBackground = "",

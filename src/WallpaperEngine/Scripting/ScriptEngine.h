@@ -47,6 +47,13 @@ public:
     struct LoadedModule {
 	DynamicValue& value;
 	JSValue module;
+	// The object the script is attached to (its `thisLayer`). Stored so init()/update() can be
+	// (re)bound to the right layer each call.
+	ScriptableObject* object = nullptr;
+	// init() is deferred to the first tick — at queueScript time (object construction) the scene's
+	// layer list isn't populated yet, so an init() that enumerates getLayerCount()/getLayer() would
+	// see zero layers (the cause of Makima showing every style at once).
+	bool inited = false;
     };
     struct JSObjectAdapters {
 	std::unique_ptr<Adapters::VectorAdapter<4>> vec4;

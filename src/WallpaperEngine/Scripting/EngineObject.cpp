@@ -2,7 +2,9 @@
 #include "ScriptEngine.h"
 #include "WallpaperEngine/Audio/AudioContext.h"
 #include "WallpaperEngine/Audio/Drivers/Recorders/PlaybackRecorder.h"
+#include "WallpaperEngine/Data/Model/Property.h"
 #include "WallpaperEngine/Logging/Log.h"
+#include "WallpaperEngine/Render/Camera.h"
 #include "WallpaperEngine/Render/Wallpapers/CScene.h"
 
 #include <ranges>
@@ -32,6 +34,43 @@ JSValue engine_get_runtime (JSContext* ctx, JSValueConst this_val, int argc, JSV
 
 JSValue engine_get_daytime (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
     return JS_NewFloat64 (ctx, g_Daytime);
+}
+
+// engine.screenResolution -> { x, y }. Scripts read .x/.y (e.g. the camera controller's
+// init()/cursor math); a missing value would crash with "cannot read .x of undefined".
+JSValue engine_get_screenresolution (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    JSClassID classId = 0;
+    auto* obj = static_cast<EngineObject*> (JS_GetAnyOpaque (this_val, &classId));
+    JSValue result = JS_NewObject (ctx);
+    float width = 1920.0f;
+    float height = 1080.0f;
+    if (obj != nullptr) {
+	width = obj->getScene ().getCamera ().getWidth ();
+	height = obj->getScene ().getCamera ().getHeight ();
+    }
+    JS_SetPropertyStr (ctx, result, "x", JS_NewFloat64 (ctx, width));
+    JS_SetPropertyStr (ctx, result, "y", JS_NewFloat64 (ctx, height));
+    return result;
+}
+
+// engine.userProperties -> { <propertyName>: <currentValue>, ... }. Script-driven wallpapers read
+// their combos/sliders/checkboxes through this (e.g. Makima's style selector reads
+// engine.userProperties.mode_combo / style_left / style_big). Reading a key off an undefined object
+// throws, which aborts the whole visibility script and leaves every layer at its default visible —
+// that's why all styles showed at once.
+JSValue engine_get_userproperties (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    JSClassID classId = 0;
+    auto* obj = static_cast<EngineObject*> (JS_GetAnyOpaque (this_val, &classId));
+    JSValue result = JS_NewObject (ctx);
+    if (obj != nullptr) {
+	for (const auto& [name, property] : obj->getScene ().getScene ().project.properties) {
+	    if (property == nullptr) {
+		continue;
+	    }
+	    JS_SetPropertyStr (ctx, result, name.c_str (), obj->getEngine ().dynamicToJs (*property));
+	}
+    }
+    return result;
 }
 
 JSValue engine_stop_interval (
@@ -214,6 +253,23 @@ EngineObject::EngineObject (ScriptEngine& engine, Render::Wallpapers::CScene& sc
 	JS_NewCFunction (this->m_engine.getContext (), engine_get_daytime, "get", 0),
 	JS_NewCFunction (this->m_engine.getContext (), engine_set_value, "set", 1), JS_PROP_ENUMERABLE
     );
+    JS_DefinePropertyGetSet (
+	this->m_engine.getContext (), this->m_instance, JS_NewAtom (this->m_engine.getContext (), "screenResolution"),
+	JS_NewCFunction (this->m_engine.getContext (), engine_get_screenresolution, "get", 0),
+	JS_NewCFunction (this->m_engine.getContext (), engine_set_value, "set", 1), JS_PROP_ENUMERABLE
+    );
+    // canvasSize is the wallpaper draw size; alias it to the screen resolution (close enough for the
+    // position math scripts do with it).
+    JS_DefinePropertyGetSet (
+	this->m_engine.getContext (), this->m_instance, JS_NewAtom (this->m_engine.getContext (), "canvasSize"),
+	JS_NewCFunction (this->m_engine.getContext (), engine_get_screenresolution, "get", 0),
+	JS_NewCFunction (this->m_engine.getContext (), engine_set_value, "set", 1), JS_PROP_ENUMERABLE
+    );
+    JS_DefinePropertyGetSet (
+	this->m_engine.getContext (), this->m_instance, JS_NewAtom (this->m_engine.getContext (), "userProperties"),
+	JS_NewCFunction (this->m_engine.getContext (), engine_get_userproperties, "get", 0),
+	JS_NewCFunction (this->m_engine.getContext (), engine_set_value, "set", 1), JS_PROP_ENUMERABLE
+    );
     JS_DefinePropertyValueStr (
 	this->m_engine.getContext (), this->m_instance, "AUDIO_RESOLUTION_16",
 	JS_NewInt32 (this->m_engine.getContext (), 16), JS_PROP_ENUMERABLE
@@ -229,14 +285,16 @@ EngineObject::EngineObject (ScriptEngine& engine, Render::Wallpapers::CScene& sc
     JS_DefinePropertyValueStr (
 	this->m_engine.getContext (), this->m_instance, "setInterval",
 	JS_NewCFunctionMagic (
-	    this->m_engine.getContext (), engine_set_interval, "setInterval", 2, JS_CFUNC_generic, this->m_instanceId
+	    this->m_engine.getContext (), engine_set_interval, "setInterval", 2, JS_CFUNC_generic_magic,
+	    this->m_instanceId
 	),
 	JS_PROP_ENUMERABLE
     );
     JS_DefinePropertyValueStr (
 	this->m_engine.getContext (), this->m_instance, "setTimeout",
 	JS_NewCFunctionMagic (
-	    this->m_engine.getContext (), engine_set_timeout, "setTimeout", 2, JS_CFUNC_generic, this->m_instanceId
+	    this->m_engine.getContext (), engine_set_timeout, "setTimeout", 2, JS_CFUNC_generic_magic,
+	    this->m_instanceId
 	),
 	JS_PROP_ENUMERABLE
     );

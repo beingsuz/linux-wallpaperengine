@@ -55,10 +55,13 @@ int scriptproperties_property_set (
 }
 
 JSValue scriptpropertiescreator_add (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
-    // no need to do anything, any add call should just return itself
-    // we'll set them either way as what comes in the DynamicValue
+    // no need to do anything, any add call should just return itself so the
+    // builder chain (createScriptProperties().addSlider(...).addCombo(...)…)
+    // keeps flowing. A C function returns an *owned* reference, so dup this_val —
+    // returning it borrowed underflows the creator's refcount across the chain
+    // and frees it mid-evaluation (use-after-free in the interpreter).
     // TODO: PROPERLY IMPLEMENT THIS CHAIN AT SOME POINT
-    return this_val;
+    return JS_DupValue (ctx, this_val);
 }
 
 JSValue scriptpropertiescreator_finish (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
@@ -169,8 +172,8 @@ ScriptPropertiesObject::ScriptPropertiesObject (ScriptEngine& engine, Render::Wa
     JS_DefinePropertyValueStr (
 	this->m_engine.getContext (), this->m_engine.getGlobalThis (), "createScriptProperties",
 	JS_NewCFunctionMagic (
-	    this->m_engine.getContext (), scriptpropertiescreator_create, "createScriptProperties", 0, JS_CFUNC_generic,
-	    m_instanceId
+	    this->m_engine.getContext (), scriptpropertiescreator_create, "createScriptProperties", 0,
+	    JS_CFUNC_generic_magic, m_instanceId
 	),
 	JS_PROP_ENUMERABLE
     );

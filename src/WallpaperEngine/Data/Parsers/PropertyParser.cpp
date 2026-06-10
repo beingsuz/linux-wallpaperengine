@@ -47,6 +47,7 @@ PropertySharedPtr PropertyParser::parse (const JSON& it, const std::string& name
 
 PropertySharedPtr PropertyParser::parseCombo (const JSON& it, const std::string& name) {
     std::map<std::string, std::string> optionsMap = {};
+    std::vector<std::pair<std::string, std::string>> optionsOrdered = {};
 
     const auto options = it.require ("options", "Combo property must have options");
 
@@ -54,28 +55,46 @@ PropertySharedPtr PropertyParser::parseCombo (const JSON& it, const std::string&
 	sLog.exception ("Property combo options should be an array");
     }
 
+    std::string firstValue;
+    bool haveFirst = false;
+
     for (auto& cur : options) {
 	if (!cur.is_object ()) {
 	    continue;
 	}
 
 	const auto value = cur.require ("value", "Combo option must have a value");
+	std::string valueStr = value.is_number () ? std::to_string (value.get<int> ()) : value.get<std::string> ();
+	const auto label = cur.require<std::string> ("label", "Combo option must have a label");
 
-	optionsMap.emplace (
-	    value.is_number () ? std::to_string (value.get<int> ()) : value.get<std::string> (),
-	    cur.require ("label", "Combo option must have a label")
-	);
+	if (!haveFirst) {
+	    firstValue = valueStr;
+	    haveFirst = true;
+	}
+
+	optionsMap.emplace (valueStr, label);
+	// Keep the wallpaper's declared option order for UI display (the map above is value-sorted).
+	optionsOrdered.emplace_back (valueStr, label);
     }
 
-    const auto value = it.require ("value", "Combo property must have a value");
+    // A combo's default value is optional in the wild — many wallpapers ship a "Style"/variant
+    // selector with no `value`, expecting it to default to the first option (this is what
+    // Wallpaper Engine itself does). Don't make a missing default fatal; fall back to the first
+    // option so the wallpaper loads instead of dropping to a static preview.
+    std::string selected = firstValue;
+    const auto value = it.optional ("value");
+
+    if (value.has_value () && !value->is_null ()) {
+	selected = value->is_number () ? std::to_string (value->get<int> ()) : value->get<std::string> ();
+    }
 
     return std::make_shared<PropertyCombo> (
 	PropertyData {
 	    .name = name,
 	    .text = it.optional<std::string> ("text", ""),
+	    .order = it.optional<int> ("order", 0),
 	},
-	ComboData { .values = optionsMap },
-	value.is_number () ? std::to_string (value.get<int> ()) : value.get<std::string> ()
+	ComboData { .values = optionsMap, .options = optionsOrdered }, selected
     );
 }
 
@@ -84,6 +103,7 @@ PropertySharedPtr PropertyParser::parseColor (const JSON& it, const std::string&
 	PropertyData {
 	    .name = name,
 	    .text = it.optional<std::string> ("text", ""),
+	    .order = it.optional<int> ("order", 0),
 	},
 	it.require ("value", "Property must have a value")
     );
@@ -94,6 +114,7 @@ PropertySharedPtr PropertyParser::parseBoolean (const JSON& it, const std::strin
 	PropertyData {
 	    .name = name,
 	    .text = it.optional<std::string> ("text", ""),
+	    .order = it.optional<int> ("order", 0),
 	},
 	it.optional ("value", false)
     );
@@ -104,6 +125,7 @@ PropertySharedPtr PropertyParser::parseSlider (const JSON& it, const std::string
 	PropertyData {
 	    .name = name,
 	    .text = it.optional<std::string> ("text", ""),
+	    .order = it.optional<int> ("order", 0),
 	},
 	SliderData {
 	    .min = it.optional ("min", 0.0f),
@@ -126,6 +148,7 @@ PropertySharedPtr PropertyParser::parseSceneTexture (const JSON& it, const std::
 	PropertyData {
 	    .name = name,
 	    .text = it.optional<std::string> ("text", ""),
+	    .order = it.optional<int> ("order", 0),
 	},
 	it.require ("value", "Property must have a value")
     );
@@ -136,6 +159,7 @@ PropertySharedPtr PropertyParser::parseFile (const JSON& it, const std::string& 
 	PropertyData {
 	    .name = name,
 	    .text = it.optional<std::string> ("text", ""),
+	    .order = it.optional<int> ("order", 0),
 	},
 	it.optional<std::string> ("value", "")
     );
@@ -146,6 +170,7 @@ PropertySharedPtr PropertyParser::parseTextInput (const JSON& it, const std::str
 	PropertyData {
 	    .name = name,
 	    .text = it.optional<std::string> ("text", ""),
+	    .order = it.optional<int> ("order", 0),
 	},
 	it.require ("value", "Property must have a value").dump ()
     );

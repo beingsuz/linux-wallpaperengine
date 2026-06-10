@@ -470,13 +470,18 @@ void WallpaperApplication::updatePlaylists () {
 }
 
 void WallpaperApplication::setupPropertiesForProject (const Project& project) {
+    const bool listJson = this->m_context.settings.general.listPropertiesJson;
+    std::vector<nlohmann::json> jsonProperties;
+
     // show properties if required
     for (const auto& [key, cur] : project.properties) {
 	// update the value of the property
 	auto override = this->m_context.settings.general.properties.find (key);
 
 	if (override != this->m_context.settings.general.properties.end ()) {
-	    sLog.out ("Applying override value for ", key);
+	    if (!listJson) {
+		sLog.out ("Applying override value for ", key);
+	    }
 
 	    cur->update (override->second, DynamicValue::UpdateSource::User);
 	}
@@ -484,6 +489,24 @@ void WallpaperApplication::setupPropertiesForProject (const Project& project) {
 	if (this->m_context.settings.general.onlyListProperties) {
 	    sLog.out (cur->dump ());
 	}
+
+	if (listJson) {
+	    jsonProperties.push_back (cur->dumpJson ());
+	}
+    }
+
+    if (listJson) {
+	// Stable order the UI relies on: the wallpaper's "order" field, then the key as a tiebreaker.
+	std::ranges::stable_sort (jsonProperties, [] (const nlohmann::json& a, const nlohmann::json& b) {
+	    const int oa = a.value ("order", 0);
+	    const int ob = b.value ("order", 0);
+	    if (oa != ob) {
+		return oa < ob;
+	    }
+	    return a.value ("key", std::string {}) < b.value ("key", std::string {});
+	});
+	// Emit the array as a single clean line on stdout so tooling can parse it directly.
+	std::cout << nlohmann::json (jsonProperties).dump () << std::endl;
     }
 }
 
@@ -1027,26 +1050,62 @@ bool WallpaperApplication::setBackground (const std::string& screen, const std::
     }
 }
 
+namespace {
+// An effect's visibility is decided once when the image's pass list is assembled (CImage::setup),
+// so a property that gates an effect's `visible` condition needs the wallpaper rebuilt to add/remove
+// that effect's passes. Everything else — shader constants/uniforms, the camera fov, and per-object
+// `visible` conditions (all read live each frame) — updates without any rebuild. Walk the scene's
+// image effects to see whether this property is one of the rebuild-requiring ones.
+bool propertyGatesEffectVisibility (const Project& project, const std::string& key) {
+    if (project.wallpaper == nullptr || !project.wallpaper->is<Scene> ()) {
+	return false;
+    }
+
+    const auto* scene = project.wallpaper->as<Scene> ();
+    for (const auto& object : scene->objects) {
+	if (!object->is<Image> ()) {
+	    continue;
+	}
+	for (const auto& effect : object->as<Image> ()->effects) {
+	    if (effect->visible != nullptr && effect->visible->condition.has_value ()
+		&& effect->visible->condition->name == key) {
+		return true;
+	    }
+	}
+    }
+    return false;
+}
+} // namespace
+
 bool WallpaperApplication::setProperty (const std::string& screen, const std::string& key, const std::string& value) {
     const auto bg = this->m_backgrounds.find (screen);
     if (bg == this->m_backgrounds.end ())
 	return false;
 
     // Only accept keys the current wallpaper actually declares.
-    if (bg->second->properties.find (key) == bg->second->properties.end ())
+    const auto propertyIt = bg->second->properties.find (key);
+    if (propertyIt == bg->second->properties.end ()) {
 	return false;
+    }
 
-    // Record the override and rebuild the wallpaper in-process. A runtime
-    // update() alone doesn't reach the shaders/materials (values are bound at
-    // load), so we reload the screen — fast and flash-free since the GL context
-    // and process are kept alive.
+    // Record the override so it survives future reloads / relaunches.
     this->m_context.settings.general.properties[key] = value;
 
-    const auto it = this->m_context.settings.general.screenBackgrounds.find (screen);
-    if (it == this->m_context.settings.general.screenBackgrounds.end ())
-	return false;
+    // Live update: push the value into the property's DynamicValue. It propagates to every connected
+    // shader constant/uniform, the camera fov, and per-object `visible` conditions — all of which are
+    // read fresh each frame — so sliders, colours and object-visibility toggles apply with no reload.
+    propertyIt->second->update (value, DynamicValue::UpdateSource::User);
 
-    return this->setBackground (screen, it->second.string ());
+    // Only when the property gates an effect's visibility (the pass list is fixed at setup) do we
+    // rebuild the wallpaper in-process — flash-free since the GL context and process stay alive.
+    if (propertyGatesEffectVisibility (*bg->second, key)) {
+	const auto it = this->m_context.settings.general.screenBackgrounds.find (screen);
+	if (it != this->m_context.settings.general.screenBackgrounds.end ()) {
+	    return this->setBackground (screen, it->second.string ());
+	}
+    }
+
+    return true;
 }
 
 bool WallpaperApplication::setScreenScaling (const std::string& screen, const std::string& mode) {

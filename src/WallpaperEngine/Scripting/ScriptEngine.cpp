@@ -1,9 +1,11 @@
 #include "ScriptEngine.h"
+#include <cstdlib>
 
 #include "Adapters/ScriptableObjectAdapter.h"
 #include "Modules/ColorModule.h"
 #include "Modules/MathModule.h"
 #include "Modules/ScriptModule.h"
+#include "Modules/VectorModule.h"
 #include "ScriptPropertiesObject.h"
 #include "ScriptableObject.h"
 #include "WallpaperEngine/Audio/AudioContext.h"
@@ -223,9 +225,11 @@ ScriptEngine::ScriptEngine (Wallpapers::CScene& scene, Media::MediaSource& media
 
     auto wemath = std::make_unique<Modules::MathModule> (*this);
     auto wecolor = std::make_unique<Modules::ColorModule> (*this);
+    auto wevector = std::make_unique<Modules::VectorModule> (*this);
 
     this->m_modules.emplace (wemath->getName (), std::move (wemath));
     this->m_modules.emplace (wecolor->getName (), std::move (wecolor));
+    this->m_modules.emplace (wevector->getName (), std::move (wevector));
 
     JS_SetModuleLoaderFunc (this->m_runtime, nullptr, scriptengine_module_loader, this);
     // setup scene objects and other things
@@ -594,12 +598,39 @@ void ScriptEngine::queueScript (const std::string& key, DynamicValue& currentVal
 
     JSModuleDef* moduleDef = static_cast<JSModuleDef*> (JS_VALUE_GET_PTR (compiled));
 
+    // Register the module entry *before* evaluating the body and point
+    // m_runningModule at it. Scripts commonly build their property bag at module
+    // top level (`var scriptProperties = createScriptProperties()…finish()`), and
+    // finish() resolves the values off getRunningModule()->value. If we evaluated
+    // the body first and only set m_runningModule afterwards, finish() would see
+    // nullptr and return undefined, so the very next line (`scriptProperties.x`)
+    // throws "cannot read property of undefined". The namespace isn't available
+    // until after evaluation, so it's patched in below; init()/update() (the only
+    // consumers of .module) run later still.
+    auto inserted = this->m_scriptModules.emplace (
+	key,
+	LoadedModule {
+	    .value = currentValue,
+	    .module = JS_UNDEFINED,
+	    .object = &object,
+	}
+    );
+
+    if (!inserted.second) {
+	JS_FreeValue (this->m_context, compiled);
+	return;
+    }
+
+    this->m_runningModule = &inserted.first->second;
+
     // Evaluate the module body (runs top-level statements like
     // engine.registerAudioBuffers()). JS_EvalFunction consumes `compiled`.
     JSValue evalResult = JS_EvalFunction (this->m_context, compiled);
     if (JS_IsException (evalResult)) {
 	logJSException (this->m_context, key.c_str ());
 	JS_FreeValue (this->m_context, evalResult);
+	this->m_scriptModules.erase (inserted.first);
+	this->m_runningModule = nullptr;
 	return;
     }
     JS_FreeValue (this->m_context, evalResult);
@@ -612,53 +643,17 @@ void ScriptEngine::queueScript (const std::string& key, DynamicValue& currentVal
     JSValue module = JS_GetModuleNamespace (this->m_context, moduleDef);
     if (JS_IsException (module)) {
 	logJSException (this->m_context, key.c_str ());
+	this->m_scriptModules.erase (inserted.first);
+	this->m_runningModule = nullptr;
 	return;
     }
 
-    auto inserted = this->m_scriptModules.emplace (
-	key,
-	LoadedModule {
-	    .value = currentValue,
-	    .module = module,
-	}
-    );
+    inserted.first->second.module = module;
 
-    if (!inserted.second) {
-	return;
-    }
-
-    JS_SetPropertyStr (this->m_context, this->m_globalThis, "thisLayer", this->m_adapters.object->instantiate (object));
-
-    // script properties do not need update as they're connected directly to the source data
-    this->m_runningModule = &inserted.first->second;
-
-    // Many scripts capture their starting value (and build their state) in an
-    // init(value) hook that runs once before the first update — e.g. audio
-    // reactive properties scale their initial value, visualizers allocate their
-    // bars. Without it update() sees uninitialised state (NaN / missing arrays),
-    // so call it here (no-op if the script doesn't export init).
-    JSValue initArgs[] = { this->dynamicToJs (currentValue) };
-    JSValue initResult = this->call (module, 1, initArgs, "init");
-    if (JS_IsException (initResult)) {
-	logJSException (this->m_context, key.c_str ());
-    }
-    JS_FreeValue (this->m_context, initResult);
-    JS_FreeValue (this->m_context, initArgs[0]);
-
-    // check if there's an update method and run it
-    JSValue args[] = { this->dynamicToJs (currentValue) };
-    JSValue result = this->call (module, 1, args, "update");
-
-    ScopeGuard guard2 ([this, args, result] () {
-	JS_FreeValue (this->m_context, result);
-	JS_FreeValue (this->m_context, args[0]);
-    });
-
-    if (JS_IsException (result)) {
-	return;
-    }
-
-    jsToDynamicValue (this->m_context, result, currentValue);
+    // init() and the first update() are deferred to the first tick (see LoadedModule::inited): at this
+    // point the object is still being constructed and the scene's layer list isn't populated, so a
+    // script that enumerates getLayerCount()/getLayer() in init() would see zero layers. tick() runs
+    // init() once (with the layer list ready) and then update() every frame.
 }
 
 void ScriptEngine::tick () {
@@ -670,6 +665,27 @@ void ScriptEngine::tick () {
     // run all update methods
     for (auto& module : this->m_scriptModules | std::views::values) {
 	this->m_runningModule = &module;
+
+	// Bind `thisLayer` to the script's own object before init()/update() — scripts compare it
+	// (thisLayer == thisScene.getLayer(...)) and gate their own visibility on it.
+	if (module.object != nullptr) {
+	    JS_SetPropertyStr (
+		this->m_context, this->m_globalThis, "thisLayer", this->m_adapters.object->instantiate (*module.object)
+	    );
+	}
+
+	// Deferred one-time init() — now the scene's layer list is populated so getLayerCount()/
+	// getLayer() inside init() see every layer.
+	if (!module.inited) {
+	    module.inited = true;
+	    JSValue initArgs[] = { this->dynamicToJs (module.value) };
+	    JSValue initResult = this->call (module.module, 1, initArgs, "init");
+	    if (JS_IsException (initResult)) {
+		logJSException (this->m_context, "script init");
+	    }
+	    JS_FreeValue (this->m_context, initResult);
+	    JS_FreeValue (this->m_context, initArgs[0]);
+	}
 
 	JSValue args[] = { this->dynamicToJs (module.value) };
 	JSValue result = this->call (module.module, 1, args, "update");

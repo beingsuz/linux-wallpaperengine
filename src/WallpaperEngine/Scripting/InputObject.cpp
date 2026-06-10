@@ -2,6 +2,9 @@
 
 #include "EngineObject.h"
 #include "ScriptEngine.h"
+#include "WallpaperEngine/Input/InputContext.h"
+#include "WallpaperEngine/Input/MouseInput.h"
+#include "WallpaperEngine/Render/RenderContext.h"
 #include "WallpaperEngine/Render/Wallpapers/CScene.h"
 
 using namespace WallpaperEngine::Scripting;
@@ -28,8 +31,12 @@ JSValue get_cursor_screen_position (JSContext* ctx, JSValueConst this_val, int a
 }
 
 JSValue get_cursor_left_down (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
-    // TODO: IMPLEMENT THIS
-    return JS_NewBool (ctx, false);
+    JSClassID classId;
+    auto* input = static_cast<InputObject*> (JS_GetAnyOpaque (this_val, &classId));
+
+    const auto status = input->getScene ().getContext ().getInputContext ().getMouseInput ().leftClick ();
+
+    return JS_NewBool (ctx, status == WallpaperEngine::Input::MouseClickStatus::Clicked);
 }
 
 JSValue input_set_value (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) { return JS_EXCEPTION; }

@@ -12,7 +12,7 @@ using namespace WallpaperEngine::Assets;
  * Represents a wallpaper engine project
  */
 struct Project {
-    enum Type { Type_Scene = 0, Type_Web = 1, Type_Video = 2, Type_Unknown = 3 };
+    enum Type { Type_Scene = 0, Type_Web = 1, Type_Video = 2, Type_Unknown = 3, Type_Application = 4, Type_Image = 5 };
 
     /** Wallpapers title */
     std::string title;

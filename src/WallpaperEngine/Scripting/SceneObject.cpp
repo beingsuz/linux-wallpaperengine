@@ -4,7 +4,10 @@
 #include "ScriptEngine.h"
 #include "ScriptableObject.h"
 #include "WallpaperEngine/Data/Utils/ScopeGuard.h"
+#include "WallpaperEngine/Render/Camera.h"
 #include "WallpaperEngine/Render/Wallpapers/CScene.h"
+
+#include <glm/vec3.hpp>
 
 using namespace WallpaperEngine::Scripting;
 
@@ -143,24 +146,25 @@ JSValue get_layer (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst
     JSValue layer = argv[0];
 
     if (JS_IsNumber (layer)) {
-	int id = 0;
+	int index = 0;
 
-	JS_ToInt32 (ctx, &id, layer);
+	JS_ToInt32 (ctx, &index, layer);
 
-	auto* object = container->getScene ().getObject (id);
-
-	if (object == nullptr) {
-	    return JS_UNDEFINED;
+	// getLayer(index) is INDEX-based in Wallpaper Engine (0 .. getLayerCount()-1). Index into the
+	// same scriptable-layer subset getLayerCount() reports, skipping non-scriptable placeholders
+	// (unknown object types) so every getLayer(0..count-1) returns a valid layer with a name —
+	// scripts iterate the range and call layer.name.includes(...) on each.
+	int current = 0;
+	for (auto* object : container->getScene ().getObjectsByRenderOrder ()) {
+	    if (object == nullptr || !object->is<ScriptableObject> ()) {
+		continue;
+	    }
+	    if (current == index) {
+		return container->getEngine ().getAdapters ().object->instantiate (*object->as<ScriptableObject> ());
+	    }
+	    ++current;
 	}
-
-	if (!object->is<ScriptableObject> ()) {
-	    return JS_UNDEFINED;
-	}
-
-	// TODO: REMOVE THIS CONST_CAST?
-	return container->getEngine ().getAdapters ().object->instantiate (
-	    const_cast<ScriptableObject&> (*object->as<ScriptableObject> ())
-	);
+	return JS_UNDEFINED;
     } else if (JS_IsString (layer)) {
 	// find by name, this is harder
 	const char* result = JS_ToCString (ctx, layer);
@@ -187,7 +191,109 @@ JSValue get_layer (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst
     return JS_EXCEPTION;
 }
 
+// thisScene.getLayerCount() -> number of layers/objects in the scene. Used by control
+// scripts that iterate layers (e.g. style/mode selectors that show/hide variant layers).
+// Without it those scripts throw "not a function" and never hide the unselected variants.
+JSValue get_layer_count (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    auto* container = get_opaque (this_val);
+
+    // Count only scriptable layers — must match getLayer(index), which skips non-scriptable
+    // placeholders, so scripts iterating 0..getLayerCount()-1 never hit an undefined layer.
+    int32_t count = 0;
+    for (auto* object : container->getScene ().getObjectsByRenderOrder ()) {
+	if (object != nullptr && object->is<ScriptableObject> ()) {
+	    ++count;
+	}
+    }
+    return JS_NewInt32 (ctx, count);
+}
+
 JSValue scene_set_value (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) { return JS_EXCEPTION; }
+
+// Build a JS Vec3 (the global VectorAdapter ctor) so scripts can call .add/.subtract/etc.
+static JSValue make_script_vec3 (JSContext* ctx, const glm::vec3& v) {
+    JSValue global = JS_GetGlobalObject (ctx);
+    JSValue ctor = JS_GetPropertyStr (ctx, global, "Vec3");
+    JSValue args[3] = { JS_NewFloat64 (ctx, v.x), JS_NewFloat64 (ctx, v.y), JS_NewFloat64 (ctx, v.z) };
+    JSValue result = JS_CallConstructor (ctx, ctor, 3, args);
+    JS_FreeValue (ctx, args[0]);
+    JS_FreeValue (ctx, args[1]);
+    JS_FreeValue (ctx, args[2]);
+    JS_FreeValue (ctx, ctor);
+    JS_FreeValue (ctx, global);
+    return result;
+}
+
+static glm::vec3 read_script_vec3 (JSContext* ctx, JSValueConst v, const glm::vec3& fallback) {
+    glm::vec3 out = fallback;
+    if (!JS_IsObject (v)) {
+	return out;
+    }
+    JSValue jx = JS_GetPropertyStr (ctx, v, "x");
+    JSValue jy = JS_GetPropertyStr (ctx, v, "y");
+    JSValue jz = JS_GetPropertyStr (ctx, v, "z");
+    double d = 0.0;
+    if (JS_ToFloat64 (ctx, &d, jx) == 0) {
+	out.x = static_cast<float> (d);
+    }
+    if (JS_ToFloat64 (ctx, &d, jy) == 0) {
+	out.y = static_cast<float> (d);
+    }
+    if (JS_ToFloat64 (ctx, &d, jz) == 0) {
+	out.z = static_cast<float> (d);
+    }
+    JS_FreeValue (ctx, jx);
+    JS_FreeValue (ctx, jy);
+    JS_FreeValue (ctx, jz);
+    return out;
+}
+
+// thisScene.getCameraTransforms() -> { eye, center, up, fov } with eye/center/up as Vec3.
+JSValue scene_get_camera_transforms (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    auto* container = get_opaque (this_val);
+    const auto& camera = container->getScene ().getCamera ();
+    JSValue obj = JS_NewObject (ctx);
+    // Return the scene's BASE camera (not any runtime override). Camera-controller scripts recompute
+    // the camera from this every frame, so feeding back the overridden value drifts it away.
+    JS_SetPropertyStr (ctx, obj, "eye", make_script_vec3 (ctx, camera.getBaseEye ()));
+    JS_SetPropertyStr (ctx, obj, "center", make_script_vec3 (ctx, camera.getBaseCenter ()));
+    JS_SetPropertyStr (ctx, obj, "up", make_script_vec3 (ctx, camera.getBaseUp ()));
+    JS_SetPropertyStr (ctx, obj, "fov", JS_NewFloat64 (ctx, camera.getFov ()));
+    return obj;
+}
+
+// thisScene.setCameraTransforms({eye, center, up, fov}) -> drives the runtime camera.
+JSValue scene_set_camera_transforms (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    auto* container = get_opaque (this_val);
+    if (argc < 1 || !JS_IsObject (argv[0])) {
+	return JS_UNDEFINED;
+    }
+    auto& camera = container->getScene ().getCamera ();
+    JSValue eye = JS_GetPropertyStr (ctx, argv[0], "eye");
+    JSValue center = JS_GetPropertyStr (ctx, argv[0], "center");
+    JSValue up = JS_GetPropertyStr (ctx, argv[0], "up");
+    JSValue fov = JS_GetPropertyStr (ctx, argv[0], "fov");
+    if (JS_IsObject (eye)) {
+	const glm::vec3 e = read_script_vec3 (ctx, eye, camera.getEye ());
+	camera.setEye (e);
+    }
+    if (JS_IsObject (center)) {
+	camera.setCenter (read_script_vec3 (ctx, center, camera.getCenter ()));
+    }
+    if (JS_IsObject (up)) {
+	camera.setUp (read_script_vec3 (ctx, up, camera.getUp ()));
+    }
+    if (JS_IsNumber (fov)) {
+	double d = 0.0;
+	JS_ToFloat64 (ctx, &d, fov);
+	camera.setFov (static_cast<float> (d));
+    }
+    JS_FreeValue (ctx, eye);
+    JS_FreeValue (ctx, center);
+    JS_FreeValue (ctx, up);
+    JS_FreeValue (ctx, fov);
+    return JS_UNDEFINED;
+}
 
 SceneObject::SceneObject (ScriptEngine& engine, Render::Wallpapers::CScene& scene) :
     m_scene (scene), m_engine (engine), m_classId (0) {
@@ -303,6 +409,20 @@ SceneObject::SceneObject (ScriptEngine& engine, Render::Wallpapers::CScene& scen
     JS_DefinePropertyValueStr (
 	this->m_engine.getContext (), this->m_instance, "getLayer",
 	JS_NewCFunction (this->m_engine.getContext (), get_layer, "getLayer", 1), JS_PROP_ENUMERABLE
+    );
+    JS_DefinePropertyValueStr (
+	this->m_engine.getContext (), this->m_instance, "getLayerCount",
+	JS_NewCFunction (this->m_engine.getContext (), get_layer_count, "getLayerCount", 0), JS_PROP_ENUMERABLE
+    );
+    JS_DefinePropertyValueStr (
+	this->m_engine.getContext (), this->m_instance, "getCameraTransforms",
+	JS_NewCFunction (this->m_engine.getContext (), scene_get_camera_transforms, "getCameraTransforms", 0),
+	JS_PROP_ENUMERABLE
+    );
+    JS_DefinePropertyValueStr (
+	this->m_engine.getContext (), this->m_instance, "setCameraTransforms",
+	JS_NewCFunction (this->m_engine.getContext (), scene_set_camera_transforms, "setCameraTransforms", 1),
+	JS_PROP_ENUMERABLE
     );
     // TODO: ADD REST OF THE METHODS
 }

@@ -64,8 +64,8 @@ int main (int argc, char* argv[]) {
 
 	app = new WallpaperEngine::Application::WallpaperApplication (appContext);
 
-	// halt if the list-properties option was specified
-	if (appContext.settings.general.onlyListProperties) {
+	// halt if either list-properties option was specified
+	if (appContext.settings.general.onlyListProperties || appContext.settings.general.listPropertiesJson) {
 	    delete app;
 	    return 0;
 	}

@@ -596,6 +596,11 @@ void ApplicationContext::loadSettingsFromArgv () {
 	.flag ()
 	.store_into (this->settings.general.onlyListProperties);
 
+    configurationGroup.add_argument ("--list-properties-json")
+	.help ("List the available properties and their current values as a single JSON array (for tooling)")
+	.flag ()
+	.store_into (this->settings.general.listPropertiesJson);
+
     configurationGroup.add_argument ("--set-property", "--property")
 	.help ("Overrides the default value of the given property")
 	.action ([this] (const std::string& value) -> void {
