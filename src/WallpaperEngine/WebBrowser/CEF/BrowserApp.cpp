@@ -40,6 +40,13 @@ void BrowserApp::OnBeforeCommandLineProcessing (const CefString& process_type, C
     command_line->AppendSwitch ("--disable-breakpad");
     command_line->AppendSwitch ("--disable-field-trial-config");
     command_line->AppendSwitch ("--no-experiments");
+    // CEF offscreen-rendering GPU/compositing stability knobs (all optional, env-overridable).
+    // These are load-bearing workarounds for Wayland — kept intentionally and individually
+    // documented below; the defaults are what render web wallpapers stably:
+    //   WPE_CEF_NO_IPG - disable the in-process GPU (re-enable the sandboxed GPU process)
+    //   WPE_CEF_OZONE  - override the Ozone platform (default: wayland)
+    //   WPE_CEF_ANGLE  - override the ANGLE backend  (default: gl-egl; "skip" omits it)
+    //   WPE_CEF_EXTRA  - extra space-separated CEF flags for experimentation
     // Run the GPU in-process instead of as a separate sandboxed process. The
     // standalone GPU process intermittently dies on Wayland offscreen rendering
     // ("GPU state invalid after WaitForGetOffsetInRange"), which takes the whole
