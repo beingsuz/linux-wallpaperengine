@@ -30,21 +30,31 @@ std::string jsEscape (const std::string& s) {
     std::string o;
     o.reserve (s.size () + 8);
     for (const char c : s) {
-        switch (c) {
-            case '\\': o += "\\\\"; break;
-            case '"': o += "\\\""; break;
-            case '\n': o += "\\n"; break;
-            case '\r': o += "\\r"; break;
-            case '\t': o += "\\t"; break;
-            default:
-                if (static_cast<unsigned char> (c) < 0x20) {
-                    char b[8];
-                    snprintf (b, sizeof (b), "\\u%04x", c);
-                    o += b;
-                } else {
-                    o += c;
-                }
-        }
+	switch (c) {
+	    case '\\':
+		o += "\\\\";
+		break;
+	    case '"':
+		o += "\\\"";
+		break;
+	    case '\n':
+		o += "\\n";
+		break;
+	    case '\r':
+		o += "\\r";
+		break;
+	    case '\t':
+		o += "\\t";
+		break;
+	    default:
+		if (static_cast<unsigned char> (c) < 0x20) {
+		    char b[8];
+		    snprintf (b, sizeof (b), "\\u%04x", c);
+		    o += b;
+		} else {
+		    o += c;
+		}
+	}
     }
     return o;
 }
@@ -53,12 +63,12 @@ std::string runCommand (const std::string& cmd) {
     std::string out;
     FILE* f = popen (cmd.c_str (), "r");
     if (f == nullptr) {
-        return out;
+	return out;
     }
     char buf[4096];
     size_t n;
     while ((n = fread (buf, 1, sizeof (buf), f)) > 0) {
-        out.append (buf, n);
+	out.append (buf, n);
     }
     pclose (f);
     return out;
@@ -70,18 +80,18 @@ std::string base64 (const std::string& in) {
     out.reserve (((in.size () + 2) / 3) * 4);
     int val = 0, bits = -6;
     for (const unsigned char c : in) {
-        val = (val << 8) + c;
-        bits += 8;
-        while (bits >= 0) {
-            out.push_back (T[(val >> bits) & 0x3F]);
-            bits -= 6;
-        }
+	val = (val << 8) + c;
+	bits += 8;
+	while (bits >= 0) {
+	    out.push_back (T[(val >> bits) & 0x3F]);
+	    bits -= 6;
+	}
     }
     if (bits > -6) {
-        out.push_back (T[((val << 8) >> (bits + 8)) & 0x3F]);
+	out.push_back (T[((val << 8) >> (bits + 8)) & 0x3F]);
     }
     while (out.size () % 4) {
-        out.push_back ('=');
+	out.push_back ('=');
     }
     return out;
 }
@@ -90,15 +100,15 @@ std::string base64 (const std::string& in) {
 std::string loadArtBytes (const std::string& artUrl, std::string& mimeOut) {
     std::string path;
     if (artUrl.rfind ("file://", 0) == 0) {
-        path = artUrl.substr (7);
+	path = artUrl.substr (7);
     } else if (!artUrl.empty () && artUrl[0] == '/') {
-        path = artUrl;
+	path = artUrl;
     } else {
-        return ""; // remote URLs: let the page load them directly if it wants
+	return ""; // remote URLs: let the page load them directly if it wants
     }
     std::ifstream f (path, std::ios::binary);
     if (!f) {
-        return "";
+	return "";
     }
     std::stringstream ss;
     ss << f.rdbuf ();
@@ -119,42 +129,42 @@ std::string hex (int r, int g, int b) {
 std::array<int, 3> dominantColor (const std::string& bytes) {
     int w = 0, h = 0, n = 0;
     stbi_uc* px = stbi_load_from_memory (
-        reinterpret_cast<const stbi_uc*> (bytes.data ()), static_cast<int> (bytes.size ()), &w, &h, &n, 3
+	reinterpret_cast<const stbi_uc*> (bytes.data ()), static_cast<int> (bytes.size ()), &w, &h, &n, 3
     );
     if (px == nullptr || w <= 0 || h <= 0) {
-        if (px != nullptr) {
-            stbi_image_free (px);
-        }
-        return {200, 200, 200};
+	if (px != nullptr) {
+	    stbi_image_free (px);
+	}
+	return { 200, 200, 200 };
     }
     double rs = 0, gs = 0, bs = 0, wsum = 0;
     const int total = w * h;
     const int step = std::max (1, total / 4096);
     for (int i = 0; i < total; i += step) {
-        const double r = px[i * 3], g = px[i * 3 + 1], b = px[i * 3 + 2];
-        const double mx = std::max ({r, g, b}), mn = std::min ({r, g, b});
-        const double sat = mx > 0 ? (mx - mn) / mx : 0;
-        const double weight = sat * sat * (mx / 255.0) + 0.005;
-        rs += r * weight;
-        gs += g * weight;
-        bs += b * weight;
-        wsum += weight;
+	const double r = px[i * 3], g = px[i * 3 + 1], b = px[i * 3 + 2];
+	const double mx = std::max ({ r, g, b }), mn = std::min ({ r, g, b });
+	const double sat = mx > 0 ? (mx - mn) / mx : 0;
+	const double weight = sat * sat * (mx / 255.0) + 0.005;
+	rs += r * weight;
+	gs += g * weight;
+	bs += b * weight;
+	wsum += weight;
     }
     stbi_image_free (px);
     if (wsum <= 0) {
-        return {200, 200, 200};
+	return { 200, 200, 200 };
     }
     int r = static_cast<int> (rs / wsum), g = static_cast<int> (gs / wsum), b = static_cast<int> (bs / wsum);
     // Album art is often dark, so the raw accent comes out near-black. Lift it to a
     // vivid level (preserving hue) so it reads as a real coloured accent.
-    const int mx = std::max ({r, g, b});
+    const int mx = std::max ({ r, g, b });
     if (mx > 0 && mx < 170) {
-        const double f = 170.0 / mx;
-        r = std::min (255, static_cast<int> (r * f));
-        g = std::min (255, static_cast<int> (g * f));
-        b = std::min (255, static_cast<int> (b * f));
+	const double f = 170.0 / mx;
+	r = std::min (255, static_cast<int> (r * f));
+	g = std::min (255, static_cast<int> (g * f));
+	b = std::min (255, static_cast<int> (b * f));
     }
-    return {r, g, b};
+    return { r, g, b };
 }
 } // namespace
 
@@ -228,24 +238,24 @@ void CWeb::renderFrame (const glm::ivec4& viewport) {
 
 std::optional<CWeb::MediaInfo> CWeb::pollMedia () {
     const std::string out = runCommand (
-        "playerctl metadata --format "
-        "'{{status}}@@{{title}}@@{{artist}}@@{{mpris:length}}@@{{position}}@@{{mpris:artUrl}}' 2>/dev/null"
+	"playerctl metadata --format "
+	"'{{status}}@@{{title}}@@{{artist}}@@{{mpris:length}}@@{{position}}@@{{mpris:artUrl}}' 2>/dev/null"
     );
     MediaInfo m;
     if (out.empty ()) {
-        m.available = false;
-        m.state = 0;
-        return m;
+	m.available = false;
+	m.state = 0;
+	return m;
     }
     std::string line = out;
     while (!line.empty () && (line.back () == '\n' || line.back () == '\r')) {
-        line.pop_back ();
+	line.pop_back ();
     }
     std::vector<std::string> p;
     size_t pos = 0, sep;
     while ((sep = line.find ("@@", pos)) != std::string::npos) {
-        p.push_back (line.substr (pos, sep - pos));
-        pos = sep + 2;
+	p.push_back (line.substr (pos, sep - pos));
+	pos = sep + 2;
     }
     p.push_back (line.substr (pos));
     m.available = true;
@@ -261,11 +271,11 @@ std::optional<CWeb::MediaInfo> CWeb::pollMedia () {
 
 void CWeb::pushBridgeData () {
     if (!this->m_browser) {
-        return;
+	return;
     }
     const CefRefPtr<CefFrame> frame = this->m_browser->GetMainFrame ();
     if (!frame) {
-        return;
+	return;
     }
     this->m_frame++;
     const std::string url = frame->GetURL ();
@@ -275,11 +285,11 @@ void CWeb::pushBridgeData () {
     std::string audio = "window.__wpAudio&&window.__wpAudio([";
     audio.reserve (1300);
     for (int ch = 0; ch < 2; ch++) {
-        for (int i = 0; i < 64; i++) {
-            char b[16];
-            snprintf (b, sizeof (b), "%.4f,", recorder.audio64[i]);
-            audio += b;
-        }
+	for (int i = 0; i < 64; i++) {
+	    char b[16];
+	    snprintf (b, sizeof (b), "%.4f,", recorder.audio64[i]);
+	    audio += b;
+	}
     }
     audio += "])";
     frame->ExecuteJavaScript (audio, url, 0);
@@ -287,89 +297,90 @@ void CWeb::pushBridgeData () {
     // Properties: deliver the wallpaper's property values once (the page may wait
     // for applyUserProperties before initialising). Typed per WE's format.
     if (!this->m_propertiesSent) {
-        this->m_propertiesSent = true;
-        std::string props = "{";
-        bool first = true;
-        for (const auto& [name, prop] : this->getWeb ().project.properties) {
-            std::string value;
-            try {
-                if (dynamic_cast<const Data::Model::PropertyColor*> (prop.get ()) != nullptr) {
-                    const glm::vec3 v = prop->getVec3 ();
-                    char b[64];
-                    snprintf (b, sizeof (b), "\"%.4f %.4f %.4f\"", v.x, v.y, v.z);
-                    value = b;
-                } else if (dynamic_cast<const Data::Model::PropertyBoolean*> (prop.get ()) != nullptr) {
-                    value = prop->getBool () ? "true" : "false";
-                } else if (dynamic_cast<const Data::Model::PropertySlider*> (prop.get ()) != nullptr) {
-                    char b[32];
-                    snprintf (b, sizeof (b), "%.6g", prop->getFloat ());
-                    value = b;
-                } else if (dynamic_cast<const Data::Model::PropertyText*> (prop.get ()) != nullptr) {
-                    continue; // text properties are UI labels, not values
-                } else {
-                    value = "\"" + jsEscape (prop->getString ()) + "\"";
-                }
-            } catch (...) {
-                continue;
-            }
-            if (!first) {
-                props += ",";
-            }
-            first = false;
-            props += "\"" + jsEscape (name) + "\":{\"value\":" + value + "}";
-        }
-        props += "}";
-        frame->ExecuteJavaScript ("window.__wpApplyProps&&window.__wpApplyProps(" + props + ")", url, 0);
+	this->m_propertiesSent = true;
+	std::string props = "{";
+	bool first = true;
+	for (const auto& [name, prop] : this->getWeb ().project.properties) {
+	    std::string value;
+	    try {
+		if (dynamic_cast<const Data::Model::PropertyColor*> (prop.get ()) != nullptr) {
+		    const glm::vec3 v = prop->getVec3 ();
+		    char b[64];
+		    snprintf (b, sizeof (b), "\"%.4f %.4f %.4f\"", v.x, v.y, v.z);
+		    value = b;
+		} else if (dynamic_cast<const Data::Model::PropertyBoolean*> (prop.get ()) != nullptr) {
+		    value = prop->getBool () ? "true" : "false";
+		} else if (dynamic_cast<const Data::Model::PropertySlider*> (prop.get ()) != nullptr) {
+		    char b[32];
+		    snprintf (b, sizeof (b), "%.6g", prop->getFloat ());
+		    value = b;
+		} else if (dynamic_cast<const Data::Model::PropertyText*> (prop.get ()) != nullptr) {
+		    continue; // text properties are UI labels, not values
+		} else {
+		    value = "\"" + jsEscape (prop->getString ()) + "\"";
+		}
+	    } catch (...) {
+		continue;
+	    }
+	    if (!first) {
+		props += ",";
+	    }
+	    first = false;
+	    props += "\"" + jsEscape (name) + "\":{\"value\":" + value + "}";
+	}
+	props += "}";
+	frame->ExecuteJavaScript ("window.__wpApplyProps&&window.__wpApplyProps(" + props + ")", url, 0);
     }
 
     // Media (via playerctl/MPRIS): poll async ~twice a second so we never block
     // the render thread; deliver to the page's listeners when each poll returns.
     if (this->m_mediaFuture.valid ()
-        && this->m_mediaFuture.wait_for (std::chrono::milliseconds (0)) == std::future_status::ready) {
-        const auto result = this->m_mediaFuture.get ();
-        if (result.has_value ()) {
-            this->m_media = *result;
-            frame->ExecuteJavaScript (
-                "window.__wpMediaProps&&window.__wpMediaProps({title:\"" + jsEscape (this->m_media.title)
-                    + "\",artist:\"" + jsEscape (this->m_media.artist) + "\",album:\"\"})",
-                url, 0
-            );
-            frame->ExecuteJavaScript (
-                "window.__wpMediaPlayback&&window.__wpMediaPlayback({state:" + std::to_string (this->m_media.state) + "})",
-                url, 0
-            );
-            frame->ExecuteJavaScript (
-                "window.__wpMediaTimeline&&window.__wpMediaTimeline({position:" + std::to_string (this->m_media.position)
-                    + ",duration:" + std::to_string (this->m_media.duration) + "})",
-                url, 0
-            );
-            if (this->m_media.artUrl != this->m_lastArtSent) {
-                this->m_lastArtSent = this->m_media.artUrl;
-                std::string mime;
-                const std::string bytes = loadArtBytes (this->m_media.artUrl, mime);
-                if (!bytes.empty ()) {
-                    const std::string dataUrl = "data:" + mime + ";base64," + base64 (bytes);
-                    // WE thumbnail events carry primary + secondary + text colours.
-                    // The page builds gradients from primary->secondary, so all are
-                    // required (an undefined secondary makes the gradient invalid and
-                    // the wallpaper falls back to its hard-coded default theme).
-                    const auto c = dominantColor (bytes);
-                    const std::string primary = hex (c[0], c[1], c[2]);
-                    const std::string secondary = hex (c[0] * 4 / 10, c[1] * 4 / 10, c[2] * 4 / 10);
-                    const double luma = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
-                    const char* text = luma < 150 ? "#ffffff" : "#101010";
-                    frame->ExecuteJavaScript (
-                        "window.__wpMediaThumb&&window.__wpMediaThumb({thumbnail:\"" + dataUrl
-                            + "\",primaryColor:\"" + primary + "\",secondaryColor:\"" + secondary
-                            + "\",textColor:\"" + text + "\"})",
-                        url, 0
-                    );
-                }
-            }
-        }
+	&& this->m_mediaFuture.wait_for (std::chrono::milliseconds (0)) == std::future_status::ready) {
+	const auto result = this->m_mediaFuture.get ();
+	if (result.has_value ()) {
+	    this->m_media = *result;
+	    frame->ExecuteJavaScript (
+		"window.__wpMediaProps&&window.__wpMediaProps({title:\"" + jsEscape (this->m_media.title)
+		    + "\",artist:\"" + jsEscape (this->m_media.artist) + "\",album:\"\"})",
+		url, 0
+	    );
+	    frame->ExecuteJavaScript (
+		"window.__wpMediaPlayback&&window.__wpMediaPlayback({state:" + std::to_string (this->m_media.state)
+		    + "})",
+		url, 0
+	    );
+	    frame->ExecuteJavaScript (
+		"window.__wpMediaTimeline&&window.__wpMediaTimeline({position:"
+		    + std::to_string (this->m_media.position) + ",duration:" + std::to_string (this->m_media.duration)
+		    + "})",
+		url, 0
+	    );
+	    if (this->m_media.artUrl != this->m_lastArtSent) {
+		this->m_lastArtSent = this->m_media.artUrl;
+		std::string mime;
+		const std::string bytes = loadArtBytes (this->m_media.artUrl, mime);
+		if (!bytes.empty ()) {
+		    const std::string dataUrl = "data:" + mime + ";base64," + base64 (bytes);
+		    // WE thumbnail events carry primary + secondary + text colours.
+		    // The page builds gradients from primary->secondary, so all are
+		    // required (an undefined secondary makes the gradient invalid and
+		    // the wallpaper falls back to its hard-coded default theme).
+		    const auto c = dominantColor (bytes);
+		    const std::string primary = hex (c[0], c[1], c[2]);
+		    const std::string secondary = hex (c[0] * 4 / 10, c[1] * 4 / 10, c[2] * 4 / 10);
+		    const double luma = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+		    const char* text = luma < 150 ? "#ffffff" : "#101010";
+		    frame->ExecuteJavaScript (
+			"window.__wpMediaThumb&&window.__wpMediaThumb({thumbnail:\"" + dataUrl + "\",primaryColor:\""
+			    + primary + "\",secondaryColor:\"" + secondary + "\",textColor:\"" + text + "\"})",
+			url, 0
+		    );
+		}
+	    }
+	}
     }
     if (!this->m_mediaFuture.valid () && (this->m_frame % 30 == 0)) {
-        this->m_mediaFuture = std::async (std::launch::async, &CWeb::pollMedia);
+	this->m_mediaFuture = std::async (std::launch::async, &CWeb::pollMedia);
     }
 }
 
