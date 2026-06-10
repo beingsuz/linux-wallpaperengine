@@ -21,6 +21,16 @@ GLFWOpenGLDriver::GLFWOpenGLDriver (const char* windowTitle, ApplicationContext&
     VideoDriver (app, m_mouseInput), m_context (context), m_mouseInput (*this) {
     glfwSetErrorCallback (CustomGLFWErrorHandler);
 
+#ifdef GLFW_PLATFORM
+    // This driver is the X11 backend (X11Output, GLFW_EXPOSE_NATIVE_X11, GLX-based GLEW).
+    // On a Wayland session GLFW 3.4 would otherwise auto-select the Wayland/EGL backend,
+    // where GLEW's GLX query fails ("No GLX display"). Force X11 (over XWayland if needed)
+    // when available; fall back to auto-detection otherwise.
+    if (glfwPlatformSupported (GLFW_PLATFORM_X11) == GLFW_TRUE) {
+	glfwInitHint (GLFW_PLATFORM, GLFW_PLATFORM_X11);
+    }
+#endif
+
     // initialize glfw
     if (glfwInit () == GLFW_FALSE) {
 	sLog.exception ("Failed to initialize glfw");

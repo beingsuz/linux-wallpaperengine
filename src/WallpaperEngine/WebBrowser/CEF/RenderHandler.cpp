@@ -24,4 +24,7 @@ int RenderHandler::getWidth () const { return this->m_webdata->getWidth (); }
 
 int RenderHandler::getHeight () const { return this->m_webdata->getHeight (); }
 
-GLuint RenderHandler::texture () const { return this->m_webdata->getWallpaperFramebuffer (); }
+// CEF's OnPaint uploads the rendered page pixels into the wallpaper's color TEXTURE (the one the
+// scene compositor samples). Returning the framebuffer id here uploaded the page into an orphan
+// texture named after the FBO, leaving the visible wallpaper texture blank (the page never showed).
+GLuint RenderHandler::texture () const { return this->m_webdata->getWallpaperTexture (); }
