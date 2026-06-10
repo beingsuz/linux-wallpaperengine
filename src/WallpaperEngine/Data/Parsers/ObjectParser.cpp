@@ -11,17 +11,77 @@
 #include "WallpaperEngine/Data/Model/Project.h"
 #include "WallpaperEngine/Logging/Log.h"
 
+#include <cstdint>
+#include <cstring>
 #include <glm/gtc/constants.hpp>
+#include <iterator>
 #include <sstream>
 
 using namespace WallpaperEngine::Data::Parsers;
 using namespace WallpaperEngine::Data::Model;
+
+namespace {
+// Parse the object's `angles.animation` keyframe track (Wallpaper Engine animates the transform via a
+// per-component {frame,value} track). The static `angles.value` stays the base; this is added on top.
+AnglesAnimation parseAnglesAnimation (const WallpaperEngine::Data::JSON::JSON& it) {
+    AnglesAnimation anim;
+
+    const auto anglesIt = it.find ("angles");
+    if (anglesIt == it.end () || !anglesIt->is_object ()) {
+	return anim;
+    }
+    const auto animIt = anglesIt->find ("animation");
+    if (animIt == anglesIt->end () || !animIt->is_object ()) {
+	return anim;
+    }
+
+    const auto readChannel = [&animIt] (const char* key, AnglesAnimation::Channel& ch) {
+	const auto cIt = animIt->find (key);
+	if (cIt == animIt->end () || !cIt->is_array ()) {
+	    return;
+	}
+	for (const auto& kf : *cIt) {
+	    if (!kf.is_object ()) {
+		continue;
+	    }
+	    const auto f = kf.find ("frame");
+	    const auto v = kf.find ("value");
+	    if (f == kf.end () || v == kf.end () || !f->is_number () || !v->is_number ()) {
+		continue;
+	    }
+	    ch.keys.emplace_back (f->get<float> (), v->get<float> ());
+	}
+    };
+    readChannel ("c0", anim.c0);
+    readChannel ("c1", anim.c1);
+    readChannel ("c2", anim.c2);
+
+    if (const auto optIt = animIt->find ("options"); optIt != animIt->end () && optIt->is_object ()) {
+	if (const auto f = optIt->find ("fps"); f != optIt->end () && f->is_number ()) {
+	    anim.fps = f->get<float> ();
+	}
+	if (const auto l = optIt->find ("length"); l != optIt->end () && l->is_number ()) {
+	    anim.length = l->get<float> ();
+	}
+	if (const auto m = optIt->find ("mode"); m != optIt->end () && m->is_string ()) {
+	    anim.mode = m->get<std::string> ();
+	}
+    }
+    if (const auto r = animIt->find ("relative"); r != animIt->end () && r->is_boolean ()) {
+	anim.relative = r->get<bool> ();
+    }
+
+    anim.present = !anim.c0.keys.empty () || !anim.c1.keys.empty () || !anim.c2.keys.empty ();
+    return anim;
+}
+} // namespace
 
 ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
     const auto imageIt = it.find ("image");
     const auto soundIt = it.find ("sound");
     const auto particleIt = it.find ("particle");
     const auto textIt = it.find ("text");
+    const auto modelIt = it.find ("model");
     const auto lightIt = it.find ("light");
     // use shape to refer to VolumeLight
     const auto shapeIt = it.find ("shape");
@@ -33,6 +93,7 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
 	basedata = ObjectData {
 	    .id = it.require<int> ("id", "Object must have an id"),
 	    .name = it.require<std::string> ("name", "Object must have a name"),
+	    .sortorder = it.optional<int> ("sortorder", 0),
 	    .dependencies = parseDependencies (it),
 	    .parent = it.optional<int> ("parent"),
 	    .origin = it.user ("origin", project.properties, glm::vec3 (0.0f)),
@@ -65,6 +126,8 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
 	};
     }
 
+    basedata.anglesAnimation = parseAnglesAnimation (it);
+
     if (imageIt != it.end () && imageIt->is_string ()) {
 	return parseImage (it, project, std::move (basedata), *imageIt);
     } else if (soundIt != it.end () && soundIt->is_array ()) {
@@ -73,6 +136,8 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
 	return parseParticle (it, project, std::move (basedata));
     } else if (textIt != it.end ()) {
 	return parseText (it, project, std::move (basedata));
+    } else if (modelIt != it.end () && modelIt->is_string ()) {
+	return parseModel (it, project, std::move (basedata), *modelIt);
     } else if (lightIt != it.end ()) {
 	sLog.error ("Light objects are not supported yet");
     } else if (shapeIt != it.end ()) {
@@ -138,6 +203,93 @@ TextUniquePtr ObjectParser::parseText (const JSON& it, const Project& project, O
 	    .verticalalign = it.optional ("verticalalign", std::string ("center")),
 	    .padding = it.optional ("padding", 0),
 	}
+    );
+}
+
+ModelObjectUniquePtr
+ObjectParser::parseModel (const JSON& it, const Project& project, ObjectData base, const std::string& mesh) {
+    // Wallpaper Engine 3D model layout (MDLV0017):
+    //   cstring version "MDLV0017" · i32 · i32 · i32 meshCount
+    //   per mesh: cstring materialRef · i32 · float[6] bbox · i32 flags · i32 vbytes
+    //             vertices (48-byte stride: pos[3] · normal[3] · tangent[4] · uv[2])
+    //             i32 ibytes · uint16 indices
+    std::vector<ModelMesh> meshes;
+
+    try {
+	const auto stream = project.assetLocator->read (mesh);
+	const std::vector<char> data { std::istreambuf_iterator<char> (*stream), std::istreambuf_iterator<char> () };
+
+	size_t offset = 0;
+	auto readI32 = [&data, &offset] () -> int32_t {
+	    // Guard against a truncated/corrupt .mdl: reading past the buffer would be undefined behaviour.
+	    // Throwing here is caught by the outer try/catch and reported as a load failure instead.
+	    if (offset + sizeof (int32_t) > data.size ()) {
+		throw std::runtime_error ("unexpected end of model data while reading header");
+	    }
+	    int32_t value = 0;
+	    std::memcpy (&value, data.data () + offset, sizeof (value));
+	    offset += sizeof (value);
+	    return value;
+	};
+	auto readCString = [&data, &offset] () -> std::string {
+	    const size_t start = offset;
+	    while (offset < data.size () && data[offset] != 0) {
+		offset++;
+	    }
+	    std::string value (data.data () + start, offset - start);
+	    if (offset < data.size ()) {
+		offset++; // skip the null terminator
+	    }
+	    return value;
+	};
+
+	const std::string version = readCString ();
+	if (version.rfind ("MDLV", 0) != 0) {
+	    sLog.error ("Unsupported model header '", version, "' in ", mesh);
+	} else {
+	    readI32 (); // unknown (15)
+	    readI32 (); // unknown (1)
+	    const int32_t meshCount = readI32 ();
+
+	    for (int32_t i = 0; i < meshCount; i++) {
+		const std::string materialRef = readCString ();
+		readI32 (); // unknown (0)
+		offset += 6 * sizeof (float); // bounding box
+		readI32 (); // flags
+
+		const int32_t vertexBytes = readI32 ();
+		if (vertexBytes <= 0 || offset + static_cast<size_t> (vertexBytes) > data.size ()) {
+		    sLog.error ("Invalid vertex block in model mesh ", i, " of ", mesh);
+		    break;
+		}
+		ModelMesh modelMesh;
+		modelMesh.vertexData.assign (data.begin () + offset, data.begin () + offset + vertexBytes);
+		offset += vertexBytes;
+
+		const int32_t indexBytes = readI32 ();
+		if (indexBytes <= 0 || offset + static_cast<size_t> (indexBytes) > data.size ()) {
+		    sLog.error ("Invalid index block in model mesh ", i, " of ", mesh);
+		    break;
+		}
+		modelMesh.indices.resize (indexBytes / sizeof (uint16_t));
+		std::memcpy (modelMesh.indices.data (), data.data () + offset, indexBytes);
+		offset += indexBytes;
+
+		try {
+		    modelMesh.material = MaterialParser::load (project, materialRef);
+		} catch (const std::exception& e) {
+		    sLog.error ("Cannot load material ", materialRef, " for model ", mesh, ": ", e.what ());
+		}
+
+		meshes.push_back (std::move (modelMesh));
+	    }
+	}
+    } catch (const std::exception& e) {
+	sLog.error ("Cannot load model ", mesh, ": ", e.what ());
+    }
+
+    return std::make_unique<ModelObject> (
+	std::move (base), ModelObjectData { .mesh = mesh, .meshes = std::move (meshes) }
     );
 }
 

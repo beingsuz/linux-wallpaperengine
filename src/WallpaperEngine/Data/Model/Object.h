@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
@@ -20,9 +21,36 @@
 namespace WallpaperEngine::Data::Model {
 using namespace WallpaperEngine::Data::Utils;
 
+/**
+ * Keyframe animation for an object's transform channel (Wallpaper Engine animates angles/origin via a
+ * per-component keyframe track). Only the linear endpoints are kept — the editor bezier tangents aren't
+ * needed for the simple sweeps these wallpapers use (e.g. Starscape's 0 -> 2π Y spin). `length` frames
+ * play at `fps`; `mode` "mirror" ping-pongs, otherwise it loops; `relative` adds the result to the base.
+ */
+struct AnglesAnimation {
+    struct Channel {
+	std::vector<std::pair<float, float>> keys; // (frame, value)
+    };
+    Channel c0; // X
+    Channel c1; // Y
+    Channel c2; // Z
+    float fps = 30.0f;
+    float length = 0.0f;
+    std::string mode;
+    bool relative = true;
+    bool present = false;
+};
+
 struct ObjectData {
     int id;
     std::string name;
+    /**
+     * Render-order key. Wallpaper Engine gives every object a `sortorder` (default 0); it is only
+     * consulted when the scene sets `customsortorder`, in which case the render list is stable-sorted
+     * by it (otherwise objects keep dependency/declaration order). Matches the binary's object field
+     * at +0x124 (getter FUN_1401a4930).
+     */
+    int sortorder = 0;
     std::vector<int> dependencies;
     std::optional<int> parent;
     /** The point of origin of the object */
@@ -31,6 +59,8 @@ struct ObjectData {
     UserSettingUniquePtr groupScale;
     UserSettingUniquePtr groupAngles;
     UserSettingUniquePtr groupVisible;
+    /** Optional keyframe animation for `angles` (parsed from the angles "animation" object when present). */
+    AnglesAnimation anglesAnimation;
 };
 
 /**
@@ -620,5 +650,36 @@ public:
     explicit Text (ObjectData data, TextData textData) noexcept :
 	Object (std::move (data)), TextData (std::move (textData)) { };
     ~Text () override = default;
+};
+
+/**
+ * A single mesh inside a model's .mdl file: interleaved vertex data (48-byte stride:
+ * position[3] + normal[3] + tangent[4] + uv[2]), uint16 indices, and the material the
+ * mesh references (parsed from the material JSON named inside the .mdl).
+ */
+struct ModelMesh {
+    std::vector<char> vertexData;
+    std::vector<uint16_t> indices;
+    MaterialUniquePtr material;
+};
+
+/**
+ * Scene object that draws a real 3D mesh. Wallpaper Engine references these with a
+ * top-level "model" key pointing at a .mdl file (per-mesh materials are stored
+ * inside the .mdl itself). The object's transform comes from ObjectData
+ * (origin/groupScale/groupAngles/groupVisible).
+ */
+struct ModelObjectData {
+    /** Path to the .mdl mesh inside the wallpaper package */
+    std::string mesh;
+    /** The meshes parsed out of the .mdl, each with its own material */
+    std::vector<ModelMesh> meshes;
+};
+
+class ModelObject : public Object, public ModelObjectData {
+public:
+    explicit ModelObject (ObjectData data, ModelObjectData modelData) noexcept :
+	Object (std::move (data)), ModelObjectData (std::move (modelData)) { };
+    ~ModelObject () override = default;
 };
 } // namespace WallpaperEngine::Data::Model

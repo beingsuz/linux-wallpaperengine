@@ -16,6 +16,14 @@ WallpaperUniquePtr WallpaperParser::parse (const JSON& file, Project& project) {
 	    return parseVideo (file, project);
 	case Project::Type_Web:
 	    return parseWeb (file, project);
+	case Project::Type_Image:
+	    // Static image wallpaper. WE draws it as a fullscreen textured quad; the fork has no
+	    // dedicated image renderer yet (the daemon shows the preview instead).
+	    sLog.exception ("Image wallpapers are not yet supported by this engine");
+	case Project::Type_Application:
+	    // Application wallpapers re-target a running app's swap chain via Windows DLL injection;
+	    // no portable Linux equivalent exists in this engine.
+	    sLog.exception ("Application wallpapers are not supported on this platform");
 	default:
 	    sLog.exception ("Unexpected project type value found... This is likely a bug");
     }
@@ -76,11 +84,25 @@ SceneUniquePtr WallpaperParser::parseScene (const JSON& file, Project& project) 
                     .width  = projectionAuto ? 0 : projectionOpt->optional <int> ("width",  0),
                     .height = projectionAuto ? 0 : projectionOpt->optional <int> ("height", 0),
                     .isAuto = projectionAuto,
-                    .nearz = camera.user ("nearz", properties, 0.0f),
-                    .farz = camera.user ("farz", properties, 1000.0f),
-                    .fov = camera.user ("fov", properties, 50.0f)
+                    // Wallpaper Engine's perspective camera defaults (verified in the binary at scene
+                    // offsets nearz=0x14c, farz=0x150, fov=0x140): nearz 0.1, farz 10000, fov 50°.
+                    // These feed the perspective projection used by 3D models and perspective particle
+                    // systems — a near of 0 makes glm::perspective degenerate and far 1000 clips large
+                    // or distant 3D content (Starscape's model + planets vanish). The 2D orthographic
+                    // compositor does NOT use these directly (Camera::setOrthogonalProjection forces
+                    // near 0 so flat layers at z=0 are never clipped).
+                    .nearz = camera.user ("nearz", properties, 0.1f),
+                    .farz = camera.user ("farz", properties, 10000.0f),
+                    // Wallpaper Engine declares fov under `general` (often property-bound, e.g.
+                    // Starscape's general.fov = {user:'fov', value:50}); older scenes put it under
+                    // `camera`. Prefer general so the user `fov` property actually drives the camera,
+                    // falling back to camera for compatibility.
+                    .fov = general.optional ("fov").has_value ()
+			       ? general.user ("fov", properties, 50.0f)
+			       : camera.user ("fov", properties, 50.0f)
                 }
             },
+            .customSortOrder = general.optional<bool> ("customsortorder", false),
             .objects = parseObjects (objects, project),
         }
     );

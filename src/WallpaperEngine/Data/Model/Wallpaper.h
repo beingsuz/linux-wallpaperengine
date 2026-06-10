@@ -105,6 +105,12 @@ struct SceneData {
 	} projection;
     } camera;
 
+    /**
+     * When set, the render list is stable-sorted by each object's `sortorder` instead of using pure
+     * dependency/declaration order (Wallpaper Engine's `customsortorder` general flag).
+     */
+    bool customSortOrder = false;
+
     ObjectList objects;
 };
 

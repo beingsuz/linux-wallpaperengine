@@ -1,4 +1,5 @@
 #include "WallpaperEngine/Render/Objects/CImage.h"
+#include "WallpaperEngine/Render/Objects/CModel.h"
 #include "WallpaperEngine/Render/Objects/CParticle.h"
 #include "WallpaperEngine/Render/Objects/CSound.h"
 #include "WallpaperEngine/Render/Objects/CText.h"
@@ -11,6 +12,7 @@
 #include "WallpaperEngine/Data/Model/Wallpaper.h"
 #include "WallpaperEngine/Data/Parsers/ObjectParser.h"
 
+#include <algorithm>
 #include <ranges>
 
 extern float g_Time;
@@ -100,6 +102,15 @@ CScene::CScene (
 	this->addObjectToRenderOrder (*object);
     }
 
+    // Wallpaper Engine's default render order is dependency/declaration order (built above). When the
+    // scene sets "customsortorder", it instead sorts by each object's "sortorder" key. Use a *stable*
+    // sort so objects that share a sortorder keep their dependency/declaration order as the tiebreaker.
+    if (scene->customSortOrder) {
+	std::ranges::stable_sort (this->m_objectsByRenderOrder, [] (const CObject* a, const CObject* b) {
+	    return a->getObject ().sortorder < b->getObject ().sortorder;
+	});
+    }
+
     // create extra framebuffers for the bloom effect
     this->_rt_4FrameBuffer = this->create (
 	"_rt_4FrameBuffer", TextureFormat_ARGB8888, TextureFlags_ClampUVs, 1.0, { sceneWidth / 4, sceneHeight / 4 },
@@ -157,7 +168,8 @@ CScene::CScene (
 			) } } }
 	      ) } };
 
-    // create image for bloom passes
+    // create image for bloom passes (only when the scene requests scene-level bloom; the
+    // wallpaper's own effect-layer bloom is handled separately by its CImage effect chain).
     if (scene->camera.bloom.enabled->value->getBool ()) {
 	this->m_bloomObjectData = ObjectParser::parse (bloom, scene->project);
 	this->m_bloomObject = this->createObject (*this->m_bloomObjectData);
@@ -234,6 +246,13 @@ Render::CObject* CScene::dispatchObjectType (const Object& object) {
 	renderObject = new Objects::CSound (*this, *object.as<Sound> ());
     } else if (object.is<Text> ()) {
 	renderObject = new Objects::CText (*this, *object.as<Text> ());
+    } else if (object.is<ModelObject> ()) {
+	const auto& model = *object.as<ModelObject> ();
+	if (model.meshes.empty () || model.meshes.front ().material == nullptr) {
+	    sLog.error ("Model object ", object.id, " has no renderable meshes, skipping");
+	    return nullptr;
+	}
+	renderObject = new Objects::CModel (*this, model);
     } else if (object.is<Particle> ()) {
 	const auto& particleData = *object.as<Particle> ();
 
