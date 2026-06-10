@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "CWallpaper.h"
 #include "WallpaperEngine/Logging/Log.h"
 #include "WallpaperEngine/Render/Wallpapers/CScene.h"
@@ -15,6 +16,12 @@ CWallpaper::CWallpaper (
 ) :
     ContextAware (context), FBOProvider (nullptr), m_wallpaperData (wallpaperData), m_audioContext (audioContext),
     m_state (scalingMode, clampMode) {
+    // Set the supersampling factor before any framebuffer is created: as the root FBOProvider, this seeds
+    // the scale that every per-object/effect provider inherits, so all render targets scale together.
+    this->setRenderScale (
+	std::clamp (this->getContext ().getApp ().getContext ().settings.render.renderScale, 0.5f, 2.0f)
+    );
+
     // generate the VAO to stop opengl from complaining
     glGenVertexArrays (1, &this->m_vaoBuffer);
     glBindVertexArray (this->m_vaoBuffer);

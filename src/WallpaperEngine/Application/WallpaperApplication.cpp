@@ -1,3 +1,4 @@
+#include <cmath>
 #include "WallpaperApplication.h"
 
 #include <sstream>
@@ -573,9 +574,11 @@ void WallpaperApplication::takeScreenshot (const std::filesystem::path& filename
 	// ensure rendering is complete before reading
 	glFinish ();
 
-	// make room for storing the pixel of this viewport
-	const int readWidth = wallpaper->getWidth ();
-	const int readHeight = wallpaper->getHeight ();
+	// make room for storing the pixel of this viewport. The scene framebuffer is allocated at the
+	// supersampled size (--render-scale), so read it back at that resolution to capture the whole frame.
+	const float renderScale = wallpaper->getRenderScale ();
+	const int readWidth = static_cast<int> (std::lround (wallpaper->getWidth () * renderScale));
+	const int readHeight = static_cast<int> (std::lround (wallpaper->getHeight () * renderScale));
 	const auto bufferSize = readWidth * readHeight * 3;
 	auto* buffer = new uint8_t[bufferSize];
 

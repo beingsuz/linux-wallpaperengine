@@ -499,6 +499,15 @@ void ApplicationContext::loadSettingsFromArgv () {
 	.default_value (1.0f)
 	.store_into (this->settings.render.playbackSpeed);
 
+    performanceGroup.add_argument ("--render-scale")
+	.help (
+	    "Supersampling factor for rendering (1.0 = native). >1 (e.g. 1.5, 2.0) antialiases and sharpens "
+	    "3D/scene wallpapers at higher GPU cost; <1 (e.g. 0.75) renders faster. Clamped to [0.5, 2.0]."
+	)
+	.scan<'g', float> ()
+	.default_value (1.0f)
+	.store_into (this->settings.render.renderScale);
+
     program.add_argument ("--control-socket")
 	.help ("Path to a Unix socket for live control (swap background, set properties/speed) without restarting")
 	.default_value (std::string (""))

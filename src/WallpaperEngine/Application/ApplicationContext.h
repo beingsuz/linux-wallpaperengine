@@ -119,6 +119,8 @@ public:
 	    int maximumFPS;
 	    /** Playback speed multiplier for animations (1.0 = normal) */
 	    float playbackSpeed;
+	    /** Supersampling factor for the render targets (1.0 = native; >1 antialiases, <1 is faster) */
+	    float renderScale;
 	    /** Indicates if pausing should happen when something goes fullscreen */
 	    bool pauseOnFullscreen;
 	    /**
@@ -209,6 +211,7 @@ public:
         .render = {
             .mode = NORMAL_WINDOW,
             .maximumFPS = 30,
+            .renderScale = 1.0f,
             .pauseOnFullscreen = true,
             .pauseOnFullscreenOnlyWhenActive = false,
             .fullscreenPauseIgnoreAppIds = {},
