@@ -36,6 +36,53 @@ class JsonExtensions {
 public:
     using base_type = JSON;
 
+    // Wallpaper Engine scenes are not strict about JSON value types: a number is
+    // frequently stored as a string ("0", "1.5") and a bool as 0/1 or "true".
+    // nlohmann's implicit conversion throws type_error.302 on those mismatches,
+    // which would abort loading an otherwise valid wallpaper. coerce<T>() bridges
+    // the common cases (arithmetic + bool from string/number/bool) and falls back
+    // to the normal implicit conversion for everything else (strings, glm vecs via
+    // operator T(), Color, ...).
+    template <typename T> [[nodiscard]] static T coerce (const base_type& value) {
+	if constexpr (std::is_same_v<T, bool>) {
+	    if (value.is_boolean ()) {
+		return value.template get<bool> ();
+	    }
+	    if (value.is_number ()) {
+		return value.template get<double> () != 0.0;
+	    }
+	    if (value.is_string ()) {
+		const std::string s = value.template get<std::string> ();
+		return s == "1" || s == "true" || s == "True" || s == "TRUE";
+	    }
+	    return value.template get<bool> ();
+	} else if constexpr (std::is_arithmetic_v<T>) {
+	    if (value.is_number ()) {
+		return value.template get<T> ();
+	    }
+	    if (value.is_boolean ()) {
+		return static_cast<T> (value.template get<bool> ());
+	    }
+	    if (value.is_string ()) {
+		const std::string s = value.template get<std::string> ();
+		try {
+		    if constexpr (std::is_integral_v<T>) {
+			return static_cast<T> (std::stoll (s));
+		    } else {
+			return static_cast<T> (std::stod (s));
+		    }
+		} catch (const std::exception&) {
+		    return T {};
+		}
+	    }
+	    return value.template get<T> ();
+	} else {
+	    // Non-arithmetic targets (std::string, glm::vec via operator T(), Color, …)
+	    // keep the original implicit-conversion behaviour.
+	    return value;
+	}
+    }
+
     template <typename T, typename std::enable_if_t<is_glm_vec<T>::value, int> = 0> [[nodiscard]] T get () const {
 	constexpr int length = GlmVecTraits<T>::length;
 	constexpr glm::qualifier qualifier = GlmVecTraits<T>::qualifier;
@@ -66,7 +113,7 @@ public:
 	    sLog.exception (message, ". Contents: ", base.dump ());
 	}
 
-	return (*it);
+	return coerce<T> (*it);
     }
     [[nodiscard]] std::optional<base_type> optional (const std::string& key) const noexcept {
 	auto base = this->base ();
@@ -87,7 +134,15 @@ public:
 	    return std::nullopt;
 	}
 
-	return *it;
+	// These accessors are noexcept; a genuinely incompatible value would otherwise
+	// throw and std::terminate the whole engine mid-load. coerce<T> handles the
+	// common number-as-string case; the catch keeps any other mismatch from being
+	// fatal (the field is simply treated as absent).
+	try {
+	    return coerce<T> (*it);
+	} catch (const std::exception&) {
+	    return std::nullopt;
+	}
     }
     template <typename T> [[nodiscard]] T optional (const std::string& key, T defaultValue) const noexcept {
 	auto base = this->base ();
@@ -97,7 +152,11 @@ public:
 	    return defaultValue;
 	}
 
-	return (*it);
+	try {
+	    return coerce<T> (*it);
+	} catch (const std::exception&) {
+	    return defaultValue;
+	}
     }
     [[nodiscard]] UserSettingUniquePtr user (const std::string& key, const Properties& properties) const;
     template <typename T>
