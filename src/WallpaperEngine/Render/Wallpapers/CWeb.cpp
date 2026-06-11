@@ -8,6 +8,8 @@
 #include "WallpaperEngine/Data/Model/Project.h"
 #include "WallpaperEngine/Data/Model/Property.h"
 #include "WallpaperEngine/Data/Model/Wallpaper.h"
+#include "WallpaperEngine/Media/MediaSource.h"
+#include "WallpaperEngine/Render/RenderContext.h"
 
 #include <algorithm>
 #include <array>
@@ -57,21 +59,6 @@ std::string jsEscape (const std::string& s) {
 	}
     }
     return o;
-}
-
-std::string runCommand (const std::string& cmd) {
-    std::string out;
-    FILE* f = popen (cmd.c_str (), "r");
-    if (f == nullptr) {
-	return out;
-    }
-    char buf[4096];
-    size_t n;
-    while ((n = fread (buf, 1, sizeof (buf), f)) > 0) {
-	out.append (buf, n);
-    }
-    pclose (f);
-    return out;
 }
 
 std::string base64 (const std::string& in) {
@@ -236,39 +223,6 @@ void CWeb::renderFrame (const glm::ivec4& viewport) {
     CefDoMessageLoopWork ();
 }
 
-std::optional<CWeb::MediaInfo> CWeb::pollMedia () {
-    const std::string out = runCommand (
-	"playerctl metadata --format "
-	"'{{status}}@@{{title}}@@{{artist}}@@{{mpris:length}}@@{{position}}@@{{mpris:artUrl}}' 2>/dev/null"
-    );
-    MediaInfo m;
-    if (out.empty ()) {
-	m.available = false;
-	m.state = 0;
-	return m;
-    }
-    std::string line = out;
-    while (!line.empty () && (line.back () == '\n' || line.back () == '\r')) {
-	line.pop_back ();
-    }
-    std::vector<std::string> p;
-    size_t pos = 0, sep;
-    while ((sep = line.find ("@@", pos)) != std::string::npos) {
-	p.push_back (line.substr (pos, sep - pos));
-	pos = sep + 2;
-    }
-    p.push_back (line.substr (pos));
-    m.available = true;
-    const std::string status = !p.empty () ? p[0] : "";
-    m.title = p.size () > 1 ? p[1] : "";
-    m.artist = p.size () > 2 ? p[2] : "";
-    m.duration = (p.size () > 3 ? std::strtod (p[3].c_str (), nullptr) : 0.0) / 1000000.0;
-    m.position = (p.size () > 4 ? std::strtod (p[4].c_str (), nullptr) : 0.0) / 1000000.0;
-    m.artUrl = p.size () > 5 ? p[5] : "";
-    m.state = status == "Playing" ? 1 : (status == "Paused" ? 2 : 0);
-    return m;
-}
-
 void CWeb::pushBridgeData () {
     if (!this->m_browser) {
 	return;
@@ -332,33 +286,34 @@ void CWeb::pushBridgeData () {
 	frame->ExecuteJavaScript ("window.__wpApplyProps&&window.__wpApplyProps(" + props + ")", url, 0);
     }
 
-    // Media (via playerctl/MPRIS): poll async ~twice a second so we never block
-    // the render thread; deliver to the page's listeners when each poll returns.
-    if (this->m_mediaFuture.valid ()
-	&& this->m_mediaFuture.wait_for (std::chrono::milliseconds (0)) == std::future_status::ready) {
-	const auto result = this->m_mediaFuture.get ();
-	if (result.has_value ()) {
-	    this->m_media = *result;
+    // Media (now-playing): sourced from the engine's native DBus/MPRIS Media::MediaSource
+    // (the app updates it on its own DBus interval), shared with the scene album-art path.
+    // Deliver to the page's listeners ~twice a second.
+    if (this->m_frame % 30 == 0) {
+	const auto& info = this->getContext ().getMediaSource ().getMediaInfo ();
+	if (info.available) {
 	    frame->ExecuteJavaScript (
-		"window.__wpMediaProps&&window.__wpMediaProps({title:\"" + jsEscape (this->m_media.title)
-		    + "\",artist:\"" + jsEscape (this->m_media.artist) + "\",album:\"\"})",
+		"window.__wpMediaProps&&window.__wpMediaProps({title:\"" + jsEscape (info.title) + "\",artist:\""
+		    + jsEscape (info.artist) + "\",album:\"" + jsEscape (info.album) + "\"})",
 		url, 0
 	    );
 	    frame->ExecuteJavaScript (
-		"window.__wpMediaPlayback&&window.__wpMediaPlayback({state:" + std::to_string (this->m_media.state)
-		    + "})",
+		"window.__wpMediaPlayback&&window.__wpMediaPlayback({state:"
+		    + std::to_string (static_cast<int> (info.playbackState)) + "})",
 		url, 0
 	    );
+	    // MPRIS position/duration are microseconds; the page's timeline expects seconds.
 	    frame->ExecuteJavaScript (
 		"window.__wpMediaTimeline&&window.__wpMediaTimeline({position:"
-		    + std::to_string (this->m_media.position) + ",duration:" + std::to_string (this->m_media.duration)
-		    + "})",
+		    + std::to_string (info.position / 1000000.0) + ",duration:"
+		    + std::to_string (info.duration / 1000000.0) + "})",
 		url, 0
 	    );
-	    if (this->m_media.artUrl != this->m_lastArtSent) {
-		this->m_lastArtSent = this->m_media.artUrl;
+	    const std::string artUrl = info.url.value_or ("");
+	    if (artUrl != this->m_lastArtSent) {
+		this->m_lastArtSent = artUrl;
 		std::string mime;
-		const std::string bytes = loadArtBytes (this->m_media.artUrl, mime);
+		const std::string bytes = loadArtBytes (artUrl, mime);
 		if (!bytes.empty ()) {
 		    const std::string dataUrl = "data:" + mime + ";base64," + base64 (bytes);
 		    // WE thumbnail events carry primary + secondary + text colours.
@@ -378,9 +333,6 @@ void CWeb::pushBridgeData () {
 		}
 	    }
 	}
-    }
-    if (!this->m_mediaFuture.valid () && (this->m_frame % 30 == 0)) {
-	this->m_mediaFuture = std::async (std::launch::async, &CWeb::pollMedia);
     }
 }
 
