@@ -1195,6 +1195,21 @@ bool WallpaperApplication::setOption (const std::string& key, const std::string&
 	settings.mouse.disableparallax = on;
     } else if (key == "nofullscreenpause") {
 	settings.render.pauseOnFullscreen = !on;
+    } else if (key == "renderscale") {
+	settings.render.renderScale = std::clamp (static_cast<float> (std::atof (value.c_str ())), 0.5f, 2.0f);
+	// Recreate the render targets at the new supersampling factor. Flash-free in-process
+	// rebuild (the GL context/process stay alive); CWallpaper reads renderScale at construction.
+	for (const auto& [screen, path] : settings.general.screenBackgrounds) {
+	    this->setBackground (screen, path.string ());
+	}
+    } else if (key == "audiodevice") {
+	settings.audio.device = (value == "default") ? "" : value;
+	// Re-init the capture pipeline on the new device, then rebuild the wallpapers so they
+	// bind the freshly-created audio context (they hold a reference to it).
+	this->setupAudio ();
+	for (const auto& [screen, path] : settings.general.screenBackgrounds) {
+	    this->setBackground (screen, path.string ());
+	}
     } else {
 	return false;
     }
