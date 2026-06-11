@@ -332,20 +332,31 @@ void CModel::render () {
     // opaque mesh stops occluding the meshes behind it (e.g. the white water/aura shell shows through
     // over the black figure body). Declare clockwise as front-facing while the model draws to undo the
     // mirror, then restore the scene default.
+    // Restore the shared GL state the 2D layers expect (no depth, CCW front) and detach our depth
+    // buffer. Run it even if a mesh pass throws, so a failing model can't leave depth/winding state
+    // that corrupts the 2D layers rendered after it.
+    const auto restoreSceneState = [&] () {
+	glFrontFace (GL_CCW);
+	glDisable (GL_DEPTH_TEST);
+	glDepthMask (GL_TRUE);
+	glBindFramebuffer (GL_FRAMEBUFFER, sceneFBO->getFramebuffer ());
+	glFramebufferRenderbuffer (GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
+    };
+
     glFrontFace (GL_CW);
 
     // Run each mesh's real generic3 pass in .mdl declaration order (matching Wallpaper Engine). CPass
     // binds the destination FBO, applies the material's blend/depth/cull, sets all the scene/material
     // uniforms (ambient, skylight, brightness, tint color/alpha, metallic, roughness, reflection
     // texture, the combos) and draws the mesh via the geometry callback.
-    for (const auto& mesh : this->m_meshes) {
-	mesh.pass->render ();
+    try {
+	for (const auto& mesh : this->m_meshes) {
+	    mesh.pass->render ();
+	}
+    } catch (...) {
+	restoreSceneState ();
+	throw;
     }
 
-    // Restore the shared GL state the 2D layers expect (no depth, CCW front) and detach our depth buffer.
-    glFrontFace (GL_CCW);
-    glDisable (GL_DEPTH_TEST);
-    glDepthMask (GL_TRUE);
-    glBindFramebuffer (GL_FRAMEBUFFER, sceneFBO->getFramebuffer ());
-    glFramebufferRenderbuffer (GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
+    restoreSceneState ();
 }

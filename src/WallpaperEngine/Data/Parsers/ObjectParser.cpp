@@ -258,7 +258,10 @@ ObjectParser::parseModel (const JSON& it, const Project& project, ObjectData bas
 		readI32 (); // flags
 
 		const int32_t vertexBytes = readI32 ();
-		if (vertexBytes <= 0 || offset + static_cast<size_t> (vertexBytes) > data.size ()) {
+		// Vertices use the generic3 48-byte stride (pos[3]·normal[3]·tangent[4]·uv[2]); a size
+		// that isn't a whole number of vertices means a corrupt or unsupported mesh layout.
+		if (vertexBytes <= 0 || (vertexBytes % 48) != 0
+		    || offset + static_cast<size_t> (vertexBytes) > data.size ()) {
 		    sLog.error ("Invalid vertex block in model mesh ", i, " of ", mesh);
 		    break;
 		}
