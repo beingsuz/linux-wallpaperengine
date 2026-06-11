@@ -716,3 +716,11 @@ install(DIRECTORY ${TARGET_OUTPUT_DIRECTORY}/ DESTINATION .
     PATTERN "linux-wallpaperengine" EXCLUDE
     PATTERN "liblinux-wallpaperengine-lib.so" EXCLUDE
 )
+
+# The bundled DSP libraries (e.g. libkissfft-float) are built into ${CMAKE_BINARY_DIR}/lib, which the
+# dev-tree binary reaches via its build RPATH but install(TARGETS) does NOT relocate. Without these the
+# $ORIGIN-relocated install fails to load ("cannot open libkissfft-float.so.131"). Stage them next to the
+# binary so the $ORIGIN runpath resolves them in a relocated/installed tree.
+install(DIRECTORY ${CMAKE_BINARY_DIR}/lib/ DESTINATION .
+    FILES_MATCHING PATTERN "*.so*"
+)
