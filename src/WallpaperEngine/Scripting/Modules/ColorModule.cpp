@@ -9,13 +9,37 @@ using namespace WallpaperEngine::Scripting::Modules;
 
 static uint32_t ColorModuleInstanceId = 0;
 std::map<uint32_t, ColorModule&> colorModules;
+// Maps each module definition to its instance id so the (static) init callback can stamp the right
+// magic on the exported functions. Populated in the constructor, consumed in wecolor_init.
+static std::map<JSModuleDef*, uint32_t> colorModuleDefs;
 
+JSValue wecolor_rgb2hsv (JSContext*, JSValueConst, int, JSValueConst*, int);
+JSValue wecolor_hsv2rgb (JSContext*, JSValueConst, int, JSValueConst*, int);
+JSValue wecolor_normalizecolor (JSContext*, JSValueConst, int, JSValueConst*, int);
+JSValue wecolor_expandcolor (JSContext*, JSValueConst, int, JSValueConst*, int);
+
+// QuickJS contract: JS_AddModuleExport declares exports (done in the constructor, before the module is
+// linked); JS_SetModuleExport must assign their values from inside the init callback (run at module
+// instantiation). The original code had these swapped — Set ran in the constructor before the exports
+// existed, so every WEColor.* stayed undefined ("not a function") and any importing script threw.
 int wecolor_init (JSContext* ctx, JSModuleDef* m) {
+    const auto it = colorModuleDefs.find (m);
+    const uint32_t instanceId = it != colorModuleDefs.end () ? it->second : 0;
 
-    JS_AddModuleExport (ctx, m, "rgb2hsv");
-    JS_AddModuleExport (ctx, m, "hsv2rgb");
-    JS_AddModuleExport (ctx, m, "normalizeColor");
-    JS_AddModuleExport (ctx, m, "expandColor");
+    JS_SetModuleExport (
+	ctx, m, "rgb2hsv", JS_NewCFunctionMagic (ctx, wecolor_rgb2hsv, "rgb2hsv", 1, JS_CFUNC_generic_magic, instanceId)
+    );
+    JS_SetModuleExport (
+	ctx, m, "hsv2rgb", JS_NewCFunctionMagic (ctx, wecolor_hsv2rgb, "hsv2rgb", 1, JS_CFUNC_generic_magic, instanceId)
+    );
+    JS_SetModuleExport (
+	ctx, m, "normalizeColor",
+	JS_NewCFunctionMagic (ctx, wecolor_normalizecolor, "normalizeColor", 1, JS_CFUNC_generic_magic, instanceId)
+    );
+    JS_SetModuleExport (
+	ctx, m, "expandColor",
+	JS_NewCFunctionMagic (ctx, wecolor_expandcolor, "expandColor", 1, JS_CFUNC_generic_magic, instanceId)
+    );
 
     return 0;
 }
@@ -229,38 +253,17 @@ JSValue wecolor_expandcolor (JSContext* ctx, JSValueConst this_val, int argc, JS
 
 ColorModule::ColorModule (ScriptEngine& engine) : ScriptModule (engine, "WEColor", wecolor_init) {
     this->m_instanceId = ++ColorModuleInstanceId;
-
-    JS_SetModuleExport (
-	this->getEngine ().getContext (), this->getDefinition (), "rgb2hsv",
-	JS_NewCFunctionMagic (
-	    this->getEngine ().getContext (), wecolor_rgb2hsv, "rgb2hsv", 1, JS_CFUNC_generic_magic, this->m_instanceId
-	)
-    );
-
-    JS_SetModuleExport (
-	this->getEngine ().getContext (), this->getDefinition (), "hsv2rgb",
-	JS_NewCFunctionMagic (
-	    this->getEngine ().getContext (), wecolor_hsv2rgb, "hsv2rgb", 1, JS_CFUNC_generic_magic, this->m_instanceId
-	)
-    );
-
-    JS_SetModuleExport (
-	this->getEngine ().getContext (), this->getDefinition (), "normalizeColor",
-	JS_NewCFunctionMagic (
-	    this->getEngine ().getContext (), wecolor_normalizecolor, "normalizeColor", 1, JS_CFUNC_generic_magic,
-	    this->m_instanceId
-	)
-    );
-
-    JS_SetModuleExport (
-	this->getEngine ().getContext (), this->getDefinition (), "expandColor",
-	JS_NewCFunctionMagic (
-	    this->getEngine ().getContext (), wecolor_expandcolor, "expandColor", 1, JS_CFUNC_generic_magic,
-	    this->m_instanceId
-	)
-    );
-
     colorModules.emplace (this->m_instanceId, *this);
+    colorModuleDefs.emplace (this->getDefinition (), this->m_instanceId);
+
+    JSContext* ctx = this->getEngine ().getContext ();
+    JS_AddModuleExport (ctx, this->getDefinition (), "rgb2hsv");
+    JS_AddModuleExport (ctx, this->getDefinition (), "hsv2rgb");
+    JS_AddModuleExport (ctx, this->getDefinition (), "normalizeColor");
+    JS_AddModuleExport (ctx, this->getDefinition (), "expandColor");
 }
 
-ColorModule::~ColorModule () { colorModules.erase (this->m_instanceId); }
+ColorModule::~ColorModule () {
+    colorModules.erase (this->m_instanceId);
+    colorModuleDefs.erase (this->getDefinition ());
+}
