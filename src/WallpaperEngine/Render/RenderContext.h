@@ -1,7 +1,9 @@
 #pragma once
 
+#include <glm/vec2.hpp>
 #include <glm/vec4.hpp>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "TextureCache.h"
@@ -44,6 +46,15 @@ namespace Render {
 	[[nodiscard]] const WallpaperApplication& getApp () const;
 	[[nodiscard]] const Drivers::VideoDriver& getDriver () const;
 	[[nodiscard]] const Drivers::Output::Output& getOutput () const;
+	/**
+	 * Output size captured the first time it is requested. Scenes with an automatic orthogonal
+	 * projection and no measurable objects fall back to this instead of the live output size so an
+	 * in-process wallpaper rebuild (live property change, control-socket bg swap) sizes its
+	 * framebuffers exactly like the original build — the live size can differ between those moments
+	 * (surface configure timing, window re-tiling) and a scene rebuilt at a different size than its
+	 * first build breaks the effect-composite chain.
+	 */
+	[[nodiscard]] glm::ivec2 getStableOutputSize () const;
 	[[nodiscard]] std::shared_ptr<const TextureProvider> resolveTexture (const std::string& name) const;
 	[[nodiscard]] const std::map<std::string, std::shared_ptr<CWallpaper>>& getWallpapers () const;
 	[[nodiscard]] Media::MediaSource& getMediaSource () const;
@@ -59,6 +70,8 @@ namespace Render {
 	Media::MediaSource& m_mediaSource;
 	/** Texture cache for the render */
 	std::unique_ptr<TextureCache> m_textureCache = nullptr;
+	/** First-requested output size, see getStableOutputSize */
+	mutable std::optional<glm::ivec2> m_stableOutputSize = std::nullopt;
     };
 } // namespace Render
 } // namespace WallpaperEngine

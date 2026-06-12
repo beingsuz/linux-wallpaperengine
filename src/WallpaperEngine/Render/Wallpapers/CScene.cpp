@@ -65,8 +65,12 @@ CScene::CScene (
 	    width = maxExtent.x * 2.0f;
 	    height = maxExtent.y * 2.0f;
 	} else {
-	    width = this->getContext ().getOutput ().getFullWidth ();
-	    height = this->getContext ().getOutput ().getFullHeight ();
+	    // Use the first-captured output size, not the live one: an in-process rebuild (live property
+	    // change, control-socket bg swap) must size the scene exactly like the original build or the
+	    // effect-composite chain samples misaligned buffers and effects stop showing.
+	    const auto fallback = this->getContext ().getStableOutputSize ();
+	    width = fallback.x;
+	    height = fallback.y;
 	    sLog.debug ("Auto projection: falling back to screen resolution ", width, "x", height);
 	}
     }
@@ -370,6 +374,9 @@ void CScene::renderFrame (const glm::ivec4& viewport) {
     // ensure we render over the whole framebuffer
     glViewport (0, 0, this->m_sceneFBO->getRealWidth (), this->m_sceneFBO->getRealHeight ());
 
+    // the clear must write all channels: a leaked alpha-disabled color mask would silently keep the
+    // framebuffer's stale alpha, which every alpha-blended effect writeback then composites against
+    glColorMask (true, true, true, true);
     glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     for (const auto& cur : this->m_objectsByRenderOrder) {
