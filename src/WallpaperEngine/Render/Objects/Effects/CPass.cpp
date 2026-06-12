@@ -32,6 +32,8 @@ extern float g_Daytime;
 const TextureMap DEFAULT_BINDS = {};
 const ImageEffectPassOverride DEFAULT_OVERRIDE = {};
 
+const glm::mat4 CPass::s_defaultMatrix = glm::mat4 (1.0f);
+
 namespace {
 std::string textureSizeLabel (const std::shared_ptr<const TextureProvider>& texture) {
     if (texture == nullptr) {
@@ -51,7 +53,7 @@ CPass::CPass (
     Helpers::ContextAware (renderable), m_renderable (renderable), m_fboProvider (std::move (fboProvider)),
     m_pass (pass), m_binds (binds.has_value () ? binds.value ().get () : DEFAULT_BINDS),
     m_override (override.has_value () ? override.value ().get () : DEFAULT_OVERRIDE), m_target (target),
-    m_blendingmode (pass.blending), m_vao (GL_NONE) {
+    m_blendingmode (pass.blending) {
     this->setupShaders ();
     glGenVertexArrays (1, &m_vao);
 }
@@ -283,6 +285,7 @@ void CPass::bindTextureUnit (int index, const std::shared_ptr<const TextureProvi
 
     glActiveTexture (GL_TEXTURE0 + index);
     glBindTexture (GL_TEXTURE_2D, texture->getTextureID (frame));
+
 }
 
 void CPass::bindTextureOverrides (uint32_t currentTexture, std::shared_ptr<const TextureProvider>& texture0) const {
@@ -463,22 +466,35 @@ void CPass::render () {
 	    " drawTo=", this->m_drawTo ? this->m_drawTo->getName () : std::string ("<null>"),
 	    " drawSize=", textureSizeLabel (this->m_drawTo), " inputSize=", textureSizeLabel (this->m_input)
 	);
-	for (const auto* uniformName : { "g_TintColor", "g_CompositeColor", "g_BlendAlpha", "g_CompositeAlpha" }) {
-	    const auto uniform = this->m_uniforms.find (uniformName);
-	    if (uniform == this->m_uniforms.end ()) {
-		continue;
-	    }
-
-	    switch (uniform->second->type) {
+	for (const auto& [uniformName, uniform] : this->m_uniforms) {
+	    switch (uniform->type) {
 		case Vector3:
 		    {
-			const auto* v = static_cast<const glm::vec3*> (uniform->second->value);
+			const auto* v = static_cast<const glm::vec3*> (uniform->value);
 			sLog.out ("  uniform ", uniformName, "=", v->x, " ", v->y, " ", v->z);
+			break;
+		    }
+		case Vector4:
+		    {
+			const auto* v = static_cast<const glm::vec4*> (uniform->value);
+			sLog.out ("  uniform ", uniformName, "=", v->x, " ", v->y, " ", v->z, " ", v->w);
+			break;
+		    }
+		case Vector2:
+		    {
+			const auto* v = static_cast<const glm::vec2*> (uniform->value);
+			sLog.out ("  uniform ", uniformName, "=", v->x, " ", v->y);
 			break;
 		    }
 		case Float:
 		    {
-			const auto* v = static_cast<const float*> (uniform->second->value);
+			const auto* v = static_cast<const float*> (uniform->value);
+			sLog.out ("  uniform ", uniformName, "=", *v);
+			break;
+		    }
+		case Integer:
+		    {
+			const auto* v = static_cast<const int*> (uniform->value);
 			sLog.out ("  uniform ", uniformName, "=", *v);
 			break;
 		    }
@@ -505,6 +521,12 @@ void CPass::render () {
     this->setupRenderAttributes ();
     this->renderGeometry ();
     this->cleanupRenderSetup ();
+
+    if (debug.passLog) {
+	if (const auto error = glGetError (); error != GL_NO_ERROR) {
+	    sLog.out ("  glGetError=", error, " (object=", this->m_renderable.getId (), " shader=", this->m_pass.shader, ")");
+	}
+    }
 }
 
 std::shared_ptr<const FBOProvider> CPass::getFBOProvider () const { return this->m_fboProvider; }
