@@ -522,15 +522,12 @@ void WallpaperApplication::setupProperties () {
 }
 
 void WallpaperApplication::setupBrowser () {
-    bool anyWebProject = std::any_of (
-	this->m_backgrounds.begin (), this->m_backgrounds.end (),
-	[] (const std::pair<const std::string, ProjectUniquePtr>& pair) -> bool {
-	    return pair.second->wallpaper->is<Web> ();
-	}
-    );
-
-    // do not perform any initialization if no web background is present
-    if (!anyWebProject || this->m_browserContext) {
+    // CEF can only initialize safely here, before the GL/EGL context exists: a late CefInitialize
+    // (live-swapping from a scene to a web wallpaper over the control socket) runs the in-process
+    // GPU's EGL setup against our already-current context and aborts the whole engine (SIGTRAP,
+    // "Initialization of all EGL display types failed"). Web wallpapers can be swapped in at any
+    // time, so pay the helper-process cost up front regardless of the initial background type.
+    if (this->m_browserContext) {
 	return;
     }
 
