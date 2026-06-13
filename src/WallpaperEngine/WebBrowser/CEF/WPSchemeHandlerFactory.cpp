@@ -2,6 +2,7 @@
 #include "WPSchemeHandler.h"
 #include "WallpaperEngine/Application/WallpaperApplication.h"
 #include "WallpaperEngine/Data/Model/Project.h"
+#include "WallpaperEngine/Data/Model/Wallpaper.h"
 #include "WallpaperEngine/WebBrowser/WebBrowserContext.h"
 #include "include/cef_parser.h"
 #include "include/wrapper/cef_helpers.h"
@@ -28,6 +29,15 @@ CefRefPtr<CefResourceHandler> WPSchemeHandlerFactory::Create (
 
     for (const auto& [screen, project] : this->m_application.getBackgrounds ()) {
 	if (project != nullptr && project->workshopId == workshopId) {
+	    return new WPSchemeHandler (*project);
+	}
+    }
+
+    // No id match (odd ids happen for local, non-workshop items): fall back to the current web
+    // background — an engine serves one wallpaper per screen, so this is the only sane source
+    // anyway, and returning nullptr would surface as ERR_UNKNOWN_URL_SCHEME on the wallpaper.
+    for (const auto& [screen, project] : this->m_application.getBackgrounds ()) {
+	if (project != nullptr && project->wallpaper != nullptr && project->wallpaper->is<Web> ()) {
 	    return new WPSchemeHandler (*project);
 	}
     }
