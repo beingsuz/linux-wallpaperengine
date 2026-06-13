@@ -193,20 +193,24 @@ void WallpaperApplication::loadBackgrounds () {
 	}
 
 	this->m_backgrounds["default"] = this->loadBackground (path);
+	// record the resolved path: the live-control rebuild paths (setProperty, scaling, clamp)
+	// reload the wallpaper through screenBackgrounds and silently skip screens missing from it
+	this->m_context.settings.general.screenBackgrounds["default"] = path;
 	return;
     }
 
-    for (const auto& [screen, path] : this->m_context.settings.general.screenBackgrounds) {
+    for (auto& [screen, path] : this->m_context.settings.general.screenBackgrounds) {
 	// skip span group synthetic keys here, they're handled below
 	if (screen.rfind ("span:", 0) == 0) {
 	    continue;
 	}
-	// screens with no path should use the default
+	// screens with no path should use the default; write the resolved path back so the
+	// live-control rebuild paths can reload this screen later
 	if (path.empty ()) {
-	    this->m_backgrounds[screen] = this->loadBackground (this->m_context.settings.general.defaultBackground);
-	} else {
-	    this->m_backgrounds[screen] = this->loadBackground (path);
+	    path = this->m_context.settings.general.defaultBackground;
 	}
+
+	this->m_backgrounds[screen] = this->loadBackground (path);
     }
 
     // Load one background per span group
@@ -1099,9 +1103,15 @@ bool WallpaperApplication::setProperty (const std::string& screen, const std::st
     // read fresh each frame — so sliders, colours and object-visibility toggles apply with no reload.
     propertyIt->second->update (value, DynamicValue::UpdateSource::User);
 
-    // Only when the property gates an effect's visibility (the pass list is fixed at setup) do we
-    // rebuild the wallpaper in-process — flash-free since the GL context and process stay alive.
-    if (propertyGatesEffectVisibility (*bg->second, key)) {
+    // Discrete toggles (booleans/combos) usually change scene STRUCTURE decided at build time — an
+    // effect's pass list, the scene-level bloom layer, a shader combo — which a value propagation
+    // can't reach. Rebuild the wallpaper in-process for those (flash-free: the GL context and the
+    // process stay alive). Sliders/colours stay pure live updates so dragging never re-parses, and
+    // conditioned effect visibilities are caught explicitly for any non-discrete source property.
+    const bool structural = propertyIt->second->is<Data::Model::PropertyBoolean> ()
+	|| propertyIt->second->is<Data::Model::PropertyCombo> ();
+
+    if (structural || propertyGatesEffectVisibility (*bg->second, key)) {
 	const auto it = this->m_context.settings.general.screenBackgrounds.find (screen);
 	if (it != this->m_context.settings.general.screenBackgrounds.end ()) {
 	    return this->setBackground (screen, it->second.string ());
