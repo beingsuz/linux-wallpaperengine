@@ -330,6 +330,16 @@ void CWeb::pushBridgeData () {
 			    + primary + "\",secondaryColor:\"" + secondary + "\",textColor:\"" + text + "\"})",
 			url, 0
 		    );
+		} else if (artUrl.rfind ("http", 0) == 0) {
+		    // Remote art (e.g. Spotify's https://i.scdn.co/...): there's no HTTP client here,
+		    // but the page runs with web security disabled and can load the image itself, so
+		    // pass the URL through. Theme colours can't be derived without the pixels — send
+		    // a neutral dark palette so the page's gradient stays valid.
+		    frame->ExecuteJavaScript (
+			"window.__wpMediaThumb&&window.__wpMediaThumb({thumbnail:\"" + jsEscape (artUrl)
+			    + "\",primaryColor:\"#5a7d9a\",secondaryColor:\"#24323e\",textColor:\"#ffffff\"})",
+			url, 0
+		    );
 		}
 	    }
 	}
