@@ -2,6 +2,9 @@
 
 #include "WallpaperEngine/Scripting/ScriptEngine.h"
 
+#include <algorithm>
+#include <cmath>
+
 using namespace WallpaperEngine::Scripting::Modules;
 
 #define min_f(a, b, c) (fminf (a, fminf (b, c)))
@@ -93,6 +96,9 @@ JSValue wecolor_rgb2hsv (JSContext* ctx, JSValueConst this_val, int argc, JSValu
 	h += 360.0f;
     }
 
+    // Wallpaper Engine's HSV convention is hue 0..1, not degrees
+    h /= 360.0f;
+
     const auto it = colorModules.find (magic);
 
     if (it == colorModules.end ()) {
@@ -127,14 +133,20 @@ JSValue wecolor_hsv2rgb (JSContext* ctx, JSValueConst this_val, int argc, JSValu
     JS_ToFloat64 (ctx, &yVal, y);
     JS_ToFloat64 (ctx, &zVal, z);
 
-    // conversion code from https://gist.github.com/yoggy/8999625
+    // conversion code from https://gist.github.com/yoggy/8999625, adapted to Wallpaper Engine's
+    // convention: hue is 0..1 (not degrees) and wraps fractionally — WE's own color-cycle script
+    // feeds hsv2rgb an ever-growing `engine.runtime * speed` and relies on the wrap for the rainbow.
     float r, g, b; // 0.0-1.0
 
-    int hi = (int)(xVal / 60.0f) % 6;
-    float f = (xVal / 60.0f) - hi;
-    float p = zVal * (1.0f - yVal);
-    float q = zVal * (1.0f - yVal * f);
-    float t = zVal * (1.0f - yVal * (1.0f - f));
+    const double hue = (xVal - std::floor (xVal)) * 6.0;
+    yVal = std::clamp (yVal, 0.0, 1.0);
+    zVal = std::clamp (zVal, 0.0, 1.0);
+
+    const int hi = static_cast<int> (hue) % 6;
+    const float f = static_cast<float> (hue) - static_cast<float> (hi);
+    const float p = zVal * (1.0f - yVal);
+    const float q = zVal * (1.0f - yVal * f);
+    const float t = zVal * (1.0f - yVal * (1.0f - f));
 
     switch (hi) {
 	case 0:
