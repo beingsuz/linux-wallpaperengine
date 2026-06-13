@@ -15,32 +15,10 @@ using namespace WallpaperEngine::WebBrowser;
 int WebBrowserContext::executeSubprocess (int argc, char* argv[]) {
     CefMainArgs main_args (argc, argv);
 
-    // The subprocess must register the same wp<workshopId> custom schemes as the
-    // browser process. Derive them from the --bg paths already present in argv
-    // (re-appended by BrowserApp::OnBeforeChildProcessLaunch) — the workshop id is
-    // the basename of the item directory. This avoids any file IO, which would
-    // close the inherited ICU data descriptor before CefExecuteProcess reads it.
-    std::vector<std::string> workshopIds;
-    auto addId = [&workshopIds] (std::string path) {
-	while (!path.empty () && path.back () == '/') {
-	    path.pop_back ();
-	}
-	const auto slash = path.find_last_of ('/');
-	std::string id = slash == std::string::npos ? path : path.substr (slash + 1);
-	if (!id.empty ()) {
-	    workshopIds.push_back (id);
-	}
-    };
-    for (int i = 1; i < argc; i++) {
-	const std::string arg = argv[i];
-	if ((arg == "--bg" || arg == "-b") && i + 1 < argc) {
-	    addId (argv[++i]);
-	} else if (arg.rfind ("--bg=", 0) == 0) {
-	    addId (arg.substr (5));
-	}
-    }
-
-    const CefRefPtr<CefApp> app = new CEF::SubprocessApp (workshopIds);
+    // The subprocess only needs to register the fixed wp scheme (the workshop id
+    // travels in the URL host), so no argv scraping or file IO is needed — file IO
+    // would close the inherited ICU data descriptor before CefExecuteProcess reads it.
+    const CefRefPtr<CefApp> app = new CEF::SubprocessApp ();
     const int exitCode = CefExecuteProcess (main_args, app, nullptr);
     // A helper process always terminates here; CefExecuteProcess returns its exit
     // code (>= 0). Guard against -1 just in case so we still exit cleanly.

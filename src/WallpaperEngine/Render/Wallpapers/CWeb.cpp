@@ -172,9 +172,9 @@ CWeb::CWeb (
     browserSettings.windowless_frame_rate = std::max (60, context.getApp ().getContext ().settings.render.maximumFPS);
 
     this->m_client = new WebBrowser::CEF::BrowserClient (m_renderHandler);
-    // use the custom scheme for the wallpaper's files
-    const std::string htmlURL = WPSchemeHandlerFactory::generateSchemeName (this->getWeb ().project.workshopId)
-	+ "://root/" + this->getWeb ().filename;
+    // use the custom scheme for the wallpaper's files; the workshop id is the host
+    const std::string htmlURL
+	= WPSchemeHandlerFactory::generateSchemeUrl (this->getWeb ().project.workshopId, this->getWeb ().filename);
     this->m_browser
 	= CefBrowserHost::CreateBrowserSync (window_info, this->m_client, htmlURL, browserSettings, nullptr, nullptr);
 }
@@ -372,8 +372,16 @@ void CWeb::updateMouse (const glm::ivec4& viewport) {
 }
 
 CWeb::~CWeb () {
-    CefDoMessageLoopWork ();
-    this->m_browser->GetHost ()->CloseBrowser (true);
+    // Force-close the browser, then pump CEF so the (asynchronous) close actually runs while our
+    // render handler is still alive. The render handler and client are CEF ref-counted: our
+    // CefRefPtr members drop their references on destruction and CEF releases its own when the
+    // close completes. The manual delete this used to do put that final release on freed memory,
+    // crashing the engine whenever a web wallpaper was swapped away from.
+    if (this->m_browser != nullptr) {
+	this->m_browser->GetHost ()->CloseBrowser (true);
 
-    delete this->m_renderHandler;
+	for (int i = 0; i < 10; i++) {
+	    CefDoMessageLoopWork ();
+	}
+    }
 }

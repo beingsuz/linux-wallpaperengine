@@ -5,37 +5,18 @@
 using namespace WallpaperEngine::WebBrowser::CEF;
 
 SubprocessApp::SubprocessApp (WallpaperEngine::Application::WallpaperApplication& application) :
-    m_application (&application) {
-    for (const auto& info : this->m_application->getBackgrounds () | std::views::values) {
-	this->m_handlerFactories[info->workshopId] = new WPSchemeHandlerFactory (*info);
-    }
-}
-
-SubprocessApp::SubprocessApp (const std::vector<std::string>& workshopIds) {
-    // Subprocess path: register the schemes by id only. The factory (which serves
-    // resources) is never invoked here — that happens in the browser process — so
-    // a null entry is enough to carry the scheme name through OnRegisterCustomSchemes.
-    for (const auto& id : workshopIds) {
-	this->m_handlerFactories[id] = nullptr;
-    }
-}
+    m_application (&application) { }
 
 void SubprocessApp::OnRegisterCustomSchemes (CefRawPtr<CefSchemeRegistrar> registrar) {
-    // register all the needed schemes, "wp" + the background id is going to be our scheme
-    for (const auto& workshopId : this->m_handlerFactories | std::views::keys) {
-	registrar->AddCustomScheme (
-	    WPSchemeHandlerFactory::generateSchemeName (workshopId),
-	    CEF_SCHEME_OPTION_STANDARD | CEF_SCHEME_OPTION_SECURE | CEF_SCHEME_OPTION_FETCH_ENABLED
-	);
-    }
+    // one fixed scheme for every wallpaper; the workshop id travels in the URL host
+    // (wp://<id>/<file>), so wallpapers swapped in later need no extra registration
+    registrar->AddCustomScheme (
+	WPENGINE_SCHEME, CEF_SCHEME_OPTION_STANDARD | CEF_SCHEME_OPTION_SECURE | CEF_SCHEME_OPTION_FETCH_ENABLED
+    );
 }
 
 const WallpaperEngine::Application::WallpaperApplication& SubprocessApp::getApplication () const {
     return *this->m_application;
-}
-
-const std::map<std::string, WPSchemeHandlerFactory*>& SubprocessApp::getHandlerFactories () const {
-    return this->m_handlerFactories;
 }
 
 void SubprocessApp::OnContextCreated (

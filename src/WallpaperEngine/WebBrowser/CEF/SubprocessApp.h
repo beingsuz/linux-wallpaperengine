@@ -18,11 +18,10 @@ public:
     explicit SubprocessApp (WallpaperEngine::Application::WallpaperApplication& application);
     /**
      * Lightweight construction for CEF helper (subprocess) processes: they only
-     * need the list of wp<workshopId> scheme names to register (derived from argv)
-     * and must NOT load backgrounds, as the file IO would close the inherited ICU
-     * data descriptor before CEF reads it.
+     * register the fixed wp scheme and must NOT load backgrounds, as the file IO
+     * would close the inherited ICU data descriptor before CEF reads it.
      */
-    explicit SubprocessApp (const std::vector<std::string>& workshopIds);
+    SubprocessApp () = default;
 
     void OnRegisterCustomSchemes (CefRawPtr<CefSchemeRegistrar> registrar) override;
 
@@ -37,10 +36,8 @@ public:
 
 protected:
     const WallpaperEngine::Application::WallpaperApplication& getApplication () const;
-    const std::map<std::string, WPSchemeHandlerFactory*>& getHandlerFactories () const;
 
 private:
-    std::map<std::string, WPSchemeHandlerFactory*> m_handlerFactories = {};
     WallpaperEngine::Application::WallpaperApplication* m_application = nullptr;
     IMPLEMENT_REFCOUNTING (SubprocessApp);
     DISALLOW_COPY_AND_ASSIGN (SubprocessApp);
