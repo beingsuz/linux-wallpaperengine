@@ -315,18 +315,34 @@ JSValue scene_get_layer_index (JSContext* ctx, JSValueConst this_val, int argc, 
 // thisScene.createLayer(modelPath) -> instantiate a new image layer at runtime and return its
 // handle. Generative scripts (audio visualizers, particle-ish bar systems) build their layers here.
 JSValue scene_create_layer (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
-    if (argc < 1 || !JS_IsString (argv[0])) {
+    if (argc < 1) {
 	return JS_UNDEFINED;
     }
 
     auto* container = get_opaque (this_val);
-    const char* path = JS_ToCString (ctx, argv[0]);
 
-    if (path == nullptr) {
-	return JS_UNDEFINED;
+    // Accept either a model-path string or an asset handle / config object carrying a `.file` path
+    // (engine.registerAsset() returns the latter).
+    std::string path;
+    if (JS_IsString (argv[0])) {
+	if (const char* p = JS_ToCString (ctx, argv[0]); p != nullptr) {
+	    path = p;
+	    JS_FreeCString (ctx, p);
+	}
+    } else if (JS_IsObject (argv[0])) {
+	JSValue file = JS_GetPropertyStr (ctx, argv[0], "file");
+	if (JS_IsString (file)) {
+	    if (const char* p = JS_ToCString (ctx, file); p != nullptr) {
+		path = p;
+		JS_FreeCString (ctx, p);
+	    }
+	}
+	JS_FreeValue (ctx, file);
     }
 
-    ScopeGuard guard ([=] { JS_FreeCString (ctx, path); });
+    if (path.empty ()) {
+	return JS_UNDEFINED;
+    }
 
     const std::string workshopId = container->getEngine ().getRunningModuleWorkshopId ();
     auto* layer = container->getScene ().createLayer (path, workshopId);

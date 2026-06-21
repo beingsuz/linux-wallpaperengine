@@ -44,6 +44,17 @@ JSValue engine_is_running_in_editor (JSContext* ctx, JSValueConst this_val, int 
     return JS_NewBool (ctx, false);
 }
 
+// engine.registerAsset(file, precache?) -> a handle carrying the asset path. Consumed by
+// thisScene.createLayer(). precache is a no-op here (assets load lazily on use).
+JSValue engine_register_asset (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    if (argc < 1 || !JS_IsString (argv[0])) {
+	return JS_UNDEFINED;
+    }
+    JSValue handle = JS_NewObject (ctx);
+    JS_SetPropertyStr (ctx, handle, "file", JS_DupValue (ctx, argv[0]));
+    return handle;
+}
+
 // Orientation from the actual render dimensions.
 JSValue engine_is_portrait (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
     JSClassID classId = 0;
@@ -357,6 +368,10 @@ EngineObject::EngineObject (ScriptEngine& engine, Render::Wallpapers::CScene& sc
     defBool ("isRunningInEditor", engine_is_running_in_editor);
     defBool ("isPortrait", engine_is_portrait);
     defBool ("isLandscape", engine_is_landscape);
+    JS_DefinePropertyValueStr (
+	this->m_engine.getContext (), this->m_instance, "registerAsset",
+	JS_NewCFunction (this->m_engine.getContext (), engine_register_asset, "registerAsset", 2), JS_PROP_ENUMERABLE
+    );
     JS_DefinePropertyValueStr (
 	this->m_engine.getContext (), this->m_instance, "registerAudioBuffers",
 	JS_NewCFunctionMagic (

@@ -1,7 +1,10 @@
 #include "ScriptableObjectAdapter.h"
 
+#include <cmath>
 #include <cstring>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #include <utility>
 
 #include "WallpaperEngine/Data/Model/DynamicValue.h"
@@ -111,6 +114,117 @@ static JSValue layer_rotate_object_space (JSContext* ctx, JSValueConst this_val,
     return JS_UNDEFINED;
 }
 
+// Compose the layer's TRS as a glm column-major matrix: translate(origin) * Ry * Rx * Rz * scale,
+// with angles in degrees. (Best-effort; matches the engine's Y-X-Z euler convention.)
+static glm::mat4 layer_trs (WallpaperEngine::Scripting::ScriptableObject* self) {
+    glm::vec3 origin (0.0f);
+    glm::vec3 angles (0.0f);
+    glm::vec3 scale (1.0f);
+    try { origin = self->getProperty ("origin").getVec3 (); } catch (const std::exception&) {}
+    try { angles = self->getProperty ("angles").getVec3 (); } catch (const std::exception&) {}
+    try { scale = self->getProperty ("scale").getVec3 (); } catch (const std::exception&) {}
+
+    glm::mat4 m (1.0f);
+    m = glm::translate (m, origin);
+    m = glm::rotate (m, glm::radians (angles.y), glm::vec3 (0.0f, 1.0f, 0.0f));
+    m = glm::rotate (m, glm::radians (angles.x), glm::vec3 (1.0f, 0.0f, 0.0f));
+    m = glm::rotate (m, glm::radians (angles.z), glm::vec3 (0.0f, 0.0f, 1.0f));
+    m = glm::scale (m, scale);
+    return m;
+}
+
+// Build a JS Mat4 (the pure-JS global class, column-major) from a glm matrix.
+static JSValue build_js_mat4 (JSContext* ctx, const glm::mat4& mat) {
+    JSValue global = JS_GetGlobalObject (ctx);
+    JSValue ctor = JS_GetPropertyStr (ctx, global, "Mat4");
+    JSValue result = JS_CallConstructor (ctx, ctor, 0, nullptr);
+    JSValue m = JS_GetPropertyStr (ctx, result, "m");
+    const float* p = glm::value_ptr (mat);
+    for (uint32_t i = 0; i < 16; i++) {
+	JS_SetPropertyUint32 (ctx, m, i, JS_NewFloat64 (ctx, p[i]));
+    }
+    JS_FreeValue (ctx, m);
+    JS_FreeValue (ctx, ctor);
+    JS_FreeValue (ctx, global);
+    return result;
+}
+
+// thisLayer.getTransformMatrix() -> Mat4 of the layer's local TRS.
+static JSValue layer_get_transform_matrix (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    auto* self = ScriptableObjectAdapter::fromJS (this_val);
+    if (self == nullptr) {
+	return JS_UNDEFINED;
+    }
+    return build_js_mat4 (ctx, layer_trs (self));
+}
+
+// thisLayer.lookAt(center, up?) / lookAtYaw(...). magic 0 = yaw+pitch, 1 = yaw only.
+static JSValue layer_look_at (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv, int magic) {
+    if (argc < 1) {
+	return JS_UNDEFINED;
+    }
+    auto* self = ScriptableObjectAdapter::fromJS (this_val);
+    if (self == nullptr) {
+	return JS_UNDEFINED;
+    }
+    glm::vec3 origin (0.0f);
+    try { origin = self->getProperty ("origin").getVec3 (); } catch (const std::exception&) {}
+
+    glm::vec3 dir = layer_read_vec3 (ctx, argv[0]) - origin;
+    if (glm::length (dir) < 1e-6f) {
+	return JS_UNDEFINED;
+    }
+    dir = glm::normalize (dir);
+    const float yaw = glm::degrees (std::atan2 (dir.x, -dir.z));
+    const float pitch = magic == 1 ? 0.0f : glm::degrees (std::asin (glm::clamp (dir.y, -1.0f, 1.0f)));
+    try {
+	auto& angles = self->getProperty ("angles");
+	angles.update (glm::vec3 (pitch, yaw, angles.getVec3 ().z), DynamicValue::UpdateSource::Script);
+    } catch (const std::exception&) {}
+    return JS_UNDEFINED;
+}
+
+// thisLayer.setParent(parent, ...) -> reparent by ILayer handle, name, or id. Only the parent link
+// changes; per-frame transform resolution walks parents, so the child inherits the new transform.
+static JSValue layer_set_parent (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    if (argc < 1) {
+	return JS_UNDEFINED;
+    }
+    auto* self = ScriptableObjectAdapter::fromJS (this_val);
+    if (self == nullptr) {
+	return JS_UNDEFINED;
+    }
+
+    auto& scene = self->getScene ();
+    int parentId = -1;
+
+    if (auto* asLayer = ScriptableObjectAdapter::fromJS (argv[0]); asLayer != nullptr) {
+	parentId = asLayer->getId ();
+    } else if (JS_IsNumber (argv[0])) {
+	int v = 0;
+	JS_ToInt32 (ctx, &v, argv[0]);
+	parentId = v;
+    } else if (JS_IsString (argv[0])) {
+	const char* nm = JS_ToCString (ctx, argv[0]);
+	if (nm != nullptr) {
+	    for (auto* o : scene.getObjectsByRenderOrder ()) {
+		if (o != nullptr && o->getObject ().name == nm) {
+		    parentId = o->getId ();
+		    break;
+		}
+	    }
+	    JS_FreeCString (ctx, nm);
+	}
+    }
+
+    // The Object is owned mutably by the scene (ObjectUniquePtr); getObject() hands out a const view,
+    // so re-seating the parent link via const_cast is well-defined here.
+    if (parentId >= 0 && parentId != self->getId ()) {
+	const_cast<WallpaperEngine::Data::Model::Object&> (self->getObject ()).parent = parentId;
+    }
+    return JS_UNDEFINED;
+}
+
 JSValue scriptableobject_property_get (JSContext* ctx, JSValueConst obj_val, JSAtom atom, JSValueConst receiver) {
     JSClassID classId = 0;
 
@@ -143,6 +257,18 @@ JSValue scriptableobject_property_get (JSContext* ctx, JSValueConst obj_val, JSA
     }
     if (std::strcmp (name, "rotateObjectSpace") == 0) {
 	return JS_NewCFunction (ctx, layer_rotate_object_space, "rotateObjectSpace", 1);
+    }
+    if (std::strcmp (name, "getTransformMatrix") == 0) {
+	return JS_NewCFunction (ctx, layer_get_transform_matrix, "getTransformMatrix", 0);
+    }
+    if (std::strcmp (name, "lookAt") == 0) {
+	return JS_NewCFunctionMagic (ctx, layer_look_at, "lookAt", 2, JS_CFUNC_generic_magic, 0);
+    }
+    if (std::strcmp (name, "lookAtYaw") == 0) {
+	return JS_NewCFunctionMagic (ctx, layer_look_at, "lookAtYaw", 2, JS_CFUNC_generic_magic, 1);
+    }
+    if (std::strcmp (name, "setParent") == 0) {
+	return JS_NewCFunction (ctx, layer_set_parent, "setParent", 2);
     }
 
     try {
