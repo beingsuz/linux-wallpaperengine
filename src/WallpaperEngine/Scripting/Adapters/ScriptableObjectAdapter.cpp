@@ -6,6 +6,7 @@
 
 #include "WallpaperEngine/Data/Model/DynamicValue.h"
 #include "WallpaperEngine/Data/Utils/ScopeGuard.h"
+#include "WallpaperEngine/Render/Wallpapers/CScene.h"
 #include "WallpaperEngine/Scripting/ScriptEngine.h"
 #include "WallpaperEngine/Scripting/ScriptableObject.h"
 
@@ -20,6 +21,95 @@ struct OpaqueScriptableObjectAdapter {
     ScriptableObjectAdapter& adapter;
     WallpaperEngine::Scripting::ScriptableObject& object;
 };
+
+// ---- ILayer methods. Exposed as functions returned by the exotic property getter below. Each
+// recovers its layer via fromJS(this_val), so `thisLayer.method()` binds correctly. ----
+
+static glm::vec3 layer_read_vec3 (JSContext* ctx, JSValueConst v) {
+    glm::vec3 out (0.0f);
+    if (!JS_IsObject (v)) {
+	return out;
+    }
+    JSValue jx = JS_GetPropertyStr (ctx, v, "x");
+    JSValue jy = JS_GetPropertyStr (ctx, v, "y");
+    JSValue jz = JS_GetPropertyStr (ctx, v, "z");
+    double d = 0.0;
+    if (JS_ToFloat64 (ctx, &d, jx) == 0) {
+	out.x = static_cast<float> (d);
+    }
+    if (JS_ToFloat64 (ctx, &d, jy) == 0) {
+	out.y = static_cast<float> (d);
+    }
+    if (JS_ToFloat64 (ctx, &d, jz) == 0) {
+	out.z = static_cast<float> (d);
+    }
+    JS_FreeValue (ctx, jx);
+    JS_FreeValue (ctx, jy);
+    JS_FreeValue (ctx, jz);
+    return out;
+}
+
+// thisLayer.getParent() -> the parent layer, or undefined.
+static JSValue layer_get_parent (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    auto* self = ScriptableObjectAdapter::fromJS (this_val);
+    if (self == nullptr || !self->getObject ().parent.has_value ()) {
+	return JS_UNDEFINED;
+    }
+    auto& scene = self->getScene ();
+    auto* parent = const_cast<WallpaperEngine::Render::CObject*> (scene.getObject (self->getObject ().parent.value ()));
+    if (parent == nullptr || !parent->is<WallpaperEngine::Scripting::ScriptableObject> ()) {
+	return JS_UNDEFINED;
+    }
+    return scene.getScriptEngine ().getAdapters ().object->instantiate (
+	*parent->as<WallpaperEngine::Scripting::ScriptableObject> ()
+    );
+}
+
+// thisLayer.getChildren() -> array of layers parented to this one.
+static JSValue layer_get_children (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    JSValue arr = JS_NewArray (ctx);
+    auto* self = ScriptableObjectAdapter::fromJS (this_val);
+    if (self == nullptr) {
+	return arr;
+    }
+    const int myId = self->getId ();
+    auto& scene = self->getScene ();
+    uint32_t index = 0;
+    for (auto* object : scene.getObjectsByRenderOrder ()) {
+	if (object == nullptr || !object->is<WallpaperEngine::Scripting::ScriptableObject> ()) {
+	    continue;
+	}
+	const auto& parent = object->getObject ().parent;
+	if (parent.has_value () && parent.value () == myId) {
+	    JS_SetPropertyUint32 (
+		ctx, arr, index++,
+		scene.getScriptEngine ().getAdapters ().object->instantiate (
+		    *object->as<WallpaperEngine::Scripting::ScriptableObject> ()
+		)
+	    );
+	}
+    }
+    return arr;
+}
+
+// thisLayer.rotateObjectSpace(angles) -> add a local rotation (degrees) to the layer's angles.
+static JSValue layer_rotate_object_space (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    if (argc < 1) {
+	return JS_UNDEFINED;
+    }
+    auto* self = ScriptableObjectAdapter::fromJS (this_val);
+    if (self == nullptr) {
+	return JS_UNDEFINED;
+    }
+    const glm::vec3 delta = layer_read_vec3 (ctx, argv[0]);
+    try {
+	auto& angles = self->getProperty ("angles");
+	angles.update (angles.getVec3 () + delta, DynamicValue::UpdateSource::Script);
+    } catch (const std::exception&) {
+	// layer has no angles property (non-image group); nothing to rotate
+    }
+    return JS_UNDEFINED;
+}
 
 JSValue scriptableobject_property_get (JSContext* ctx, JSValueConst obj_val, JSAtom atom, JSValueConst receiver) {
     JSClassID classId = 0;
@@ -42,6 +132,17 @@ JSValue scriptableobject_property_get (JSContext* ctx, JSValueConst obj_val, JSA
     // (name.includes("Big")/"Nude"/... to categorise layers), so expose it directly.
     if (std::strcmp (name, "name") == 0) {
 	return JS_NewString (ctx, container->object.getObject ().name.c_str ());
+    }
+
+    // ILayer methods (return a callable; bound to this layer via fromJS on call).
+    if (std::strcmp (name, "getParent") == 0) {
+	return JS_NewCFunction (ctx, layer_get_parent, "getParent", 0);
+    }
+    if (std::strcmp (name, "getChildren") == 0) {
+	return JS_NewCFunction (ctx, layer_get_children, "getChildren", 0);
+    }
+    if (std::strcmp (name, "rotateObjectSpace") == 0) {
+	return JS_NewCFunction (ctx, layer_rotate_object_space, "rotateObjectSpace", 1);
     }
 
     try {
