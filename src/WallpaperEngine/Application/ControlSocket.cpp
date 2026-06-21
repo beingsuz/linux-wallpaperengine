@@ -134,6 +134,11 @@ std::string ControlSocket::handle (WallpaperApplication& app, const std::string&
 	iss >> screen >> mode;
 	return app.setScreenClamp (screen, mode) ? "ok\n" : "error\n";
     }
+    if (cmd == "screenshot") {
+	// Capture a rendered frame of the live wallpaper to a file (for theme-colour extraction and
+	// static fallbacks). The save is async, so callers poll for the file after the "ok".
+	return app.captureScreenshot (rest ()) ? "ok\n" : "error\n";
+    }
 
     return "unknown command\n";
 }

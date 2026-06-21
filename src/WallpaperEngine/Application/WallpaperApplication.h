@@ -94,6 +94,10 @@ public:
     void setVolume (int volume);
     void setMute (bool muted);
     bool setOption (const std::string& key, const std::string& value);
+    // Capture a rendered frame of the current wallpaper(s) to an image file. Safe to call live from
+    // the control socket (runs on the render thread, reads the last rendered FBO). The file is saved
+    // asynchronously, so callers should poll for it. Returns false if nothing is renderable yet.
+    bool captureScreenshot (const std::filesystem::path& path) const;
     [[nodiscard]] std::string controlStatus () const;
 
 private:

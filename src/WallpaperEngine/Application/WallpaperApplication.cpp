@@ -534,6 +534,18 @@ void WallpaperApplication::setupBrowser () {
     this->m_browserContext = std::make_unique<WebBrowser::WebBrowserContext> (*this);
 }
 
+bool WallpaperApplication::captureScreenshot (const std::filesystem::path& path) const {
+    if (path.empty () || this->m_renderContext == nullptr || this->m_renderContext->getWallpapers ().empty ()) {
+	return false;
+    }
+
+    // Reuse the same FBO-readback path the startup --screenshot uses; we're on the render thread
+    // (control socket is polled at the top of render()), so the GL context is current and the
+    // wallpaper FBO holds the last rendered frame.
+    this->takeScreenshot (path);
+    return true;
+}
+
 void WallpaperApplication::takeScreenshot (const std::filesystem::path& filename) const {
     const int width = this->m_renderContext->getOutput ().getFullWidth ();
     const int height = this->m_renderContext->getOutput ().getFullHeight ();
