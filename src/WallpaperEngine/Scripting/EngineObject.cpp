@@ -24,6 +24,46 @@ JSValue engine_open_user_shortcut (JSContext* ctx, JSValueConst this_val, int ar
     return JS_UNDEFINED;
 }
 
+// Context queries. linux-wallpaperengine always runs as a desktop wallpaper (not a screensaver,
+// not the WE editor, not mobile), so these return fixed truths. Scripts guard heavily on them
+// (e.g. `if (engine.isWallpaper())`), and a missing method throws "not a function" — aborting the
+// whole script — so they must exist even though the answers are constant.
+JSValue engine_is_wallpaper (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    return JS_NewBool (ctx, true);
+}
+JSValue engine_is_screensaver (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    return JS_NewBool (ctx, false);
+}
+JSValue engine_is_desktop_device (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    return JS_NewBool (ctx, true);
+}
+JSValue engine_is_mobile_device (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    return JS_NewBool (ctx, false);
+}
+JSValue engine_is_running_in_editor (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    return JS_NewBool (ctx, false);
+}
+
+// Orientation from the actual render dimensions.
+JSValue engine_is_portrait (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    JSClassID classId = 0;
+    auto* obj = static_cast<EngineObject*> (JS_GetAnyOpaque (this_val, &classId));
+    bool portrait = false;
+    if (obj != nullptr) {
+	portrait = obj->getScene ().getCamera ().getHeight () > obj->getScene ().getCamera ().getWidth ();
+    }
+    return JS_NewBool (ctx, portrait);
+}
+JSValue engine_is_landscape (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    JSClassID classId = 0;
+    auto* obj = static_cast<EngineObject*> (JS_GetAnyOpaque (this_val, &classId));
+    bool landscape = true;
+    if (obj != nullptr) {
+	landscape = obj->getScene ().getCamera ().getWidth () >= obj->getScene ().getCamera ().getHeight ();
+    }
+    return JS_NewBool (ctx, landscape);
+}
+
 JSValue engine_get_frametime (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
     return JS_NewFloat64 (ctx, g_Time - g_TimeLast);
 }
@@ -303,6 +343,20 @@ EngineObject::EngineObject (ScriptEngine& engine, Render::Wallpapers::CScene& sc
 	JS_NewCFunction (this->m_engine.getContext (), engine_open_user_shortcut, "openUserShortcut", 0),
 	JS_PROP_ENUMERABLE
     );
+    // Context-query methods (constant truths for a desktop wallpaper).
+    const auto defBool = [&] (const char* name, JSCFunction* fn) {
+	JS_DefinePropertyValueStr (
+	    this->m_engine.getContext (), this->m_instance, name,
+	    JS_NewCFunction (this->m_engine.getContext (), fn, name, 0), JS_PROP_ENUMERABLE
+	);
+    };
+    defBool ("isWallpaper", engine_is_wallpaper);
+    defBool ("isScreensaver", engine_is_screensaver);
+    defBool ("isDesktopDevice", engine_is_desktop_device);
+    defBool ("isMobileDevice", engine_is_mobile_device);
+    defBool ("isRunningInEditor", engine_is_running_in_editor);
+    defBool ("isPortrait", engine_is_portrait);
+    defBool ("isLandscape", engine_is_landscape);
     JS_DefinePropertyValueStr (
 	this->m_engine.getContext (), this->m_instance, "registerAudioBuffers",
 	JS_NewCFunctionMagic (
