@@ -966,6 +966,16 @@ void CImage::render () {
 	    && !parentData.groupVisible->value->getBool ()) {
 	    return;
 	}
+	// A script that toggles an image-layer container's visibility drives image.visible (what that
+	// layer renders from), not groupVisible, so honor it here too or children of a hidden image
+	// parent would keep rendering.
+	if (parentData.is<Image> ()) {
+	    const auto* parentImage = parentData.as<Image> ();
+	    if (parentImage->visible != nullptr && parentImage->visible->value != nullptr
+		&& !parentImage->visible->value->getBool ()) {
+		return;
+	    }
+	}
 	parent = parentData.parent;
     }
 

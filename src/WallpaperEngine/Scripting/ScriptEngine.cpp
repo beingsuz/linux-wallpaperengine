@@ -295,6 +295,15 @@ static void logJSException (JSContext* ctx, const char* context) {
 	    sLog.error ("ScriptEngine [", context, "]: ", str);
 	    JS_FreeCString (ctx, str);
 	}
+	JSValue stack = JS_GetPropertyStr (ctx, exc, "stack");
+	if (!JS_IsUndefined (stack) && !JS_IsNull (stack)) {
+	    const char* sstr = JS_ToCString (ctx, stack);
+	    if (sstr) {
+		sLog.error ("ScriptEngine [", context, "] stack: ", sstr);
+		JS_FreeCString (ctx, sstr);
+	    }
+	}
+	JS_FreeValue (ctx, stack);
     }
     JS_FreeValue (ctx, exc);
 }
@@ -570,6 +579,26 @@ JSValue ScriptEngine::call (JSValue module, int argc, JSValue argv[], const char
     }
 
     return JS_Call (this->m_context, function, module, argc, argv);
+}
+
+std::string ScriptEngine::getRunningModuleWorkshopId () const {
+    if (this->m_runningModule == nullptr || this->m_context == nullptr) {
+	return "";
+    }
+
+    JSValue wid = JS_GetPropertyStr (this->m_context, this->m_runningModule->module, "__workshopId");
+    std::string result;
+
+    if (JS_IsString (wid)) {
+	const char* str = JS_ToCString (this->m_context, wid);
+	if (str != nullptr) {
+	    result = str;
+	    JS_FreeCString (this->m_context, str);
+	}
+    }
+
+    JS_FreeValue (this->m_context, wid);
+    return result;
 }
 
 void ScriptEngine::queueScript (const std::string& key, DynamicValue& currentValue, ScriptableObject& object) {
