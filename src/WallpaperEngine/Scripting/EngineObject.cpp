@@ -24,10 +24,8 @@ JSValue engine_open_user_shortcut (JSContext* ctx, JSValueConst this_val, int ar
     return JS_UNDEFINED;
 }
 
-// Context queries. linux-wallpaperengine always runs as a desktop wallpaper (not a screensaver,
-// not the WE editor, not mobile), so these return fixed truths. Scripts guard heavily on them
-// (e.g. `if (engine.isWallpaper())`), and a missing method throws "not a function" — aborting the
-// whole script — so they must exist even though the answers are constant.
+// Context queries: we always run as a desktop wallpaper, so these return constant truths. Scripts
+// guard on them and a missing method throws "not a function", so they must still exist.
 JSValue engine_is_wallpaper (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
     return JS_NewBool (ctx, true);
 }
@@ -87,8 +85,7 @@ JSValue engine_get_daytime (JSContext* ctx, JSValueConst this_val, int argc, JSV
     return JS_NewFloat64 (ctx, g_Daytime);
 }
 
-// engine.screenResolution -> { x, y }. Scripts read .x/.y (e.g. the camera controller's
-// init()/cursor math); a missing value would crash with "cannot read .x of undefined".
+// engine.screenResolution -> { x, y }. Scripts read .x/.y for camera/cursor math.
 JSValue engine_get_screenresolution (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
     JSClassID classId = 0;
     auto* obj = static_cast<EngineObject*> (JS_GetAnyOpaque (this_val, &classId));
@@ -104,11 +101,8 @@ JSValue engine_get_screenresolution (JSContext* ctx, JSValueConst this_val, int 
     return result;
 }
 
-// engine.userProperties -> { <propertyName>: <currentValue>, ... }. Script-driven wallpapers read
-// their combos/sliders/checkboxes through this (e.g. Makima's style selector reads
-// engine.userProperties.mode_combo / style_left / style_big). Reading a key off an undefined object
-// throws, which aborts the whole visibility script and leaves every layer at its default visible —
-// that's why all styles showed at once.
+// engine.userProperties -> { <propertyName>: <currentValue>, ... }. Scripts read their
+// combos/sliders/checkboxes through this to drive layer visibility etc.
 JSValue engine_get_userproperties (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
     JSClassID classId = 0;
     auto* obj = static_cast<EngineObject*> (JS_GetAnyOpaque (this_val, &classId));
@@ -228,10 +222,8 @@ JSValue engine_set_timeout (JSContext* ctx, JSValueConst this_val, int argc, JSV
     return JS_NewCFunctionData (ctx, engine_stop_timeout, 2, magic, 1, args);
 }
 
-// Getter for the `average` property of the object returned by
-// engine.registerAudioBuffers(). Returns a fresh JS array of the current
-// frequency-band levels so scripts always read live audio. func_data[0] holds
-// the resolution (16/32/64); magic holds the engine instance id.
+// Getter for `average` on the engine.registerAudioBuffers() object: a fresh array of live frequency
+// levels. func_data[0] = resolution (16/32/64), magic = engine instance id.
 JSValue engine_audio_buffer_average (
     JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv, int magic, JSValueConst* func_data
 ) {
@@ -271,9 +263,7 @@ JSValue engine_register_audio_buffers (JSContext* ctx, JSValueConst this_val, in
     JSValue getter = JS_NewCFunctionData (ctx, engine_audio_buffer_average, 0, magic, 1, data);
     JS_FreeValue (ctx, data[0]);
 
-    JS_DefinePropertyGetSet (
-	ctx, obj, JS_NewAtom (ctx, "average"), getter, JS_UNDEFINED, JS_PROP_ENUMERABLE
-    );
+    JS_DefinePropertyGetSet (ctx, obj, JS_NewAtom (ctx, "average"), getter, JS_UNDEFINED, JS_PROP_ENUMERABLE);
 
     return obj;
 }
@@ -309,8 +299,7 @@ EngineObject::EngineObject (ScriptEngine& engine, Render::Wallpapers::CScene& sc
 	JS_NewCFunction (this->m_engine.getContext (), engine_get_screenresolution, "get", 0),
 	JS_NewCFunction (this->m_engine.getContext (), engine_set_value, "set", 1), JS_PROP_ENUMERABLE
     );
-    // canvasSize is the wallpaper draw size; alias it to the screen resolution (close enough for the
-    // position math scripts do with it).
+    // canvasSize is the wallpaper draw size; alias it to the screen resolution.
     JS_DefinePropertyGetSet (
 	this->m_engine.getContext (), this->m_instance, JS_NewAtom (this->m_engine.getContext (), "canvasSize"),
 	JS_NewCFunction (this->m_engine.getContext (), engine_get_screenresolution, "get", 0),
@@ -382,9 +371,8 @@ EngineObject::EngineObject (ScriptEngine& engine, Render::Wallpapers::CScene& sc
     );
     // TODO: ADD THE REST OF THE DEFINITION!
 
-    // Register this instance so the magic-tagged C functions (setInterval,
-    // setTimeout, registerAudioBuffers, ...) can find it by id. The destructor
-    // erases it; without this insert every lookup fails and those APIs no-op.
+    // Register this instance so magic-tagged C functions (setInterval, registerAudioBuffers, ...) can
+    // find it by id; the destructor erases it.
     engineInstances.emplace (this->m_instanceId, *this);
 }
 

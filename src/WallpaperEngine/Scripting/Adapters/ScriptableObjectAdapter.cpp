@@ -25,8 +25,7 @@ struct OpaqueScriptableObjectAdapter {
     WallpaperEngine::Scripting::ScriptableObject& object;
 };
 
-// ---- ILayer methods. Exposed as functions returned by the exotic property getter below. Each
-// recovers its layer via fromJS(this_val), so `thisLayer.method()` binds correctly. ----
+// ILayer methods, returned by the exotic getter below; each recovers its layer via fromJS(this_val).
 
 static glm::vec3 layer_read_vec3 (JSContext* ctx, JSValueConst v) {
     glm::vec3 out (0.0f);
@@ -109,20 +108,25 @@ static JSValue layer_rotate_object_space (JSContext* ctx, JSValueConst this_val,
 	auto& angles = self->getProperty ("angles");
 	angles.update (angles.getVec3 () + delta, DynamicValue::UpdateSource::Script);
     } catch (const std::exception&) {
-	// layer has no angles property (non-image group); nothing to rotate
+	// layer has no angles property (non-image group)
     }
     return JS_UNDEFINED;
 }
 
-// Compose the layer's TRS as a glm column-major matrix: translate(origin) * Ry * Rx * Rz * scale,
-// with angles in degrees. (Best-effort; matches the engine's Y-X-Z euler convention.)
+// Compose the layer's TRS: translate(origin) * Ry * Rx * Rz * scale, angles in degrees (Y-X-Z euler).
 static glm::mat4 layer_trs (WallpaperEngine::Scripting::ScriptableObject* self) {
     glm::vec3 origin (0.0f);
     glm::vec3 angles (0.0f);
     glm::vec3 scale (1.0f);
-    try { origin = self->getProperty ("origin").getVec3 (); } catch (const std::exception&) {}
-    try { angles = self->getProperty ("angles").getVec3 (); } catch (const std::exception&) {}
-    try { scale = self->getProperty ("scale").getVec3 (); } catch (const std::exception&) {}
+    try {
+	origin = self->getProperty ("origin").getVec3 ();
+    } catch (const std::exception&) { }
+    try {
+	angles = self->getProperty ("angles").getVec3 ();
+    } catch (const std::exception&) { }
+    try {
+	scale = self->getProperty ("scale").getVec3 ();
+    } catch (const std::exception&) { }
 
     glm::mat4 m (1.0f);
     m = glm::translate (m, origin);
@@ -168,7 +172,9 @@ static JSValue layer_look_at (JSContext* ctx, JSValueConst this_val, int argc, J
 	return JS_UNDEFINED;
     }
     glm::vec3 origin (0.0f);
-    try { origin = self->getProperty ("origin").getVec3 (); } catch (const std::exception&) {}
+    try {
+	origin = self->getProperty ("origin").getVec3 ();
+    } catch (const std::exception&) { }
 
     glm::vec3 dir = layer_read_vec3 (ctx, argv[0]) - origin;
     if (glm::length (dir) < 1e-6f) {
@@ -180,12 +186,11 @@ static JSValue layer_look_at (JSContext* ctx, JSValueConst this_val, int argc, J
     try {
 	auto& angles = self->getProperty ("angles");
 	angles.update (glm::vec3 (pitch, yaw, angles.getVec3 ().z), DynamicValue::UpdateSource::Script);
-    } catch (const std::exception&) {}
+    } catch (const std::exception&) { }
     return JS_UNDEFINED;
 }
 
-// thisLayer.setParent(parent, ...) -> reparent by ILayer handle, name, or id. Only the parent link
-// changes; per-frame transform resolution walks parents, so the child inherits the new transform.
+// thisLayer.setParent(parent, ...) -> reparent by ILayer handle, name, or id.
 static JSValue layer_set_parent (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
     if (argc < 1) {
 	return JS_UNDEFINED;
@@ -217,8 +222,7 @@ static JSValue layer_set_parent (JSContext* ctx, JSValueConst this_val, int argc
 	}
     }
 
-    // The Object is owned mutably by the scene (ObjectUniquePtr); getObject() hands out a const view,
-    // so re-seating the parent link via const_cast is well-defined here.
+    // getObject() is a const view of an object the scene owns mutably, so the const_cast is safe.
     if (parentId >= 0 && parentId != self->getId ()) {
 	const_cast<WallpaperEngine::Data::Model::Object&> (self->getObject ()).parent = parentId;
     }
@@ -242,8 +246,7 @@ JSValue scriptableobject_property_get (JSContext* ctx, JSValueConst obj_val, JSA
 
     ScopeGuard guard ([=] { JS_FreeCString (ctx, name); });
 
-    // The object's name isn't a DynamicValue property, but scripts read layer.name heavily
-    // (name.includes("Big")/"Nude"/... to categorise layers), so expose it directly.
+    // name isn't a DynamicValue property, but scripts read layer.name to categorise layers.
     if (std::strcmp (name, "name") == 0) {
 	return JS_NewString (ctx, container->object.getObject ().name.c_str ());
     }
@@ -300,10 +303,8 @@ int scriptableobject_property_set (
 
     ScopeGuard guard ([=] { JS_FreeCString (ctx, name); });
 
-    // Writing a layer property from a script (e.g. layer.visible = false, layer.origin = vec) must
-    // reach the live DynamicValue so the change actually renders. This setter used to be a no-op,
-    // which is why script-driven wallpapers (Makima's style selector) that hide/show layers showed
-    // every layer at once. Push the JS value into the matching property.
+    // Push a script write (layer.visible = false, layer.origin = vec) into the live DynamicValue so
+    // it renders; was a no-op before, hiding never took effect.
     try {
 	auto& property = container->object.getProperty (name);
 
@@ -329,7 +330,7 @@ int scriptableobject_property_set (
 	    );
 	}
     } catch (const std::exception&) {
-	// Unknown property — silently ignore (matches the previous behaviour for non-registered keys).
+	// Unknown property — silently ignore.
     }
 
     return 1;
@@ -337,10 +338,8 @@ int scriptableobject_property_set (
 
 ScriptableObjectAdapter::ScriptableObjectAdapter (ScriptEngine& engine, std::string name) :
     ObjectAdapter (engine), m_exoticMethods (), m_name (std::move (name)) {
-    // Route property reads/writes on layer objects through our handlers (must be set before
-    // registerType installs the exotic table). Without this the getters/setters below are never
-    // called — layer.name reads undefined and layer.visible = ... is a no-op, which is why
-    // script-driven wallpapers (Makima) couldn't read names or hide/show layers.
+    // Route property reads/writes through our handlers; must be set before registerType installs the
+    // exotic table, else the getters/setters below never fire.
     this->m_exoticMethods.get_property = scriptableobject_property_get;
     this->m_exoticMethods.set_property = scriptableobject_property_set;
 

@@ -1,5 +1,5 @@
-#include <cmath>
 #include "WallpaperApplication.h"
+#include <cmath>
 
 #include <sstream>
 
@@ -194,8 +194,7 @@ void WallpaperApplication::loadBackgrounds () {
 	}
 
 	this->m_backgrounds["default"] = this->loadBackground (path);
-	// record the resolved path: the live-control rebuild paths (setProperty, scaling, clamp)
-	// reload the wallpaper through screenBackgrounds and silently skip screens missing from it
+	// record resolved path so live-control rebuilds can reload it via screenBackgrounds
 	this->m_context.settings.general.screenBackgrounds["default"] = path;
 	return;
     }
@@ -205,8 +204,7 @@ void WallpaperApplication::loadBackgrounds () {
 	if (screen.rfind ("span:", 0) == 0) {
 	    continue;
 	}
-	// screens with no path should use the default; write the resolved path back so the
-	// live-control rebuild paths can reload this screen later
+	// screens with no path should use the default; write it back so live-control can reload this screen
 	if (path.empty ()) {
 	    path = this->m_context.settings.general.defaultBackground;
 	}
@@ -502,7 +500,7 @@ void WallpaperApplication::setupPropertiesForProject (const Project& project) {
     }
 
     if (listJson) {
-	// Stable order the UI relies on: the wallpaper's "order" field, then the key as a tiebreaker.
+	// Stable order the UI relies on: "order" field, then key as tiebreaker.
 	std::ranges::stable_sort (jsonProperties, [] (const nlohmann::json& a, const nlohmann::json& b) {
 	    const int oa = a.value ("order", 0);
 	    const int ob = b.value ("order", 0);
@@ -511,7 +509,6 @@ void WallpaperApplication::setupPropertiesForProject (const Project& project) {
 	    }
 	    return a.value ("key", std::string {}) < b.value ("key", std::string {});
 	});
-	// Emit the array as a single clean line on stdout so tooling can parse it directly.
 	std::cout << nlohmann::json (jsonProperties).dump () << std::endl;
     }
 }
@@ -523,11 +520,8 @@ void WallpaperApplication::setupProperties () {
 }
 
 void WallpaperApplication::setupBrowser () {
-    // CEF can only initialize safely here, before the GL/EGL context exists: a late CefInitialize
-    // (live-swapping from a scene to a web wallpaper over the control socket) runs the in-process
-    // GPU's EGL setup against our already-current context and aborts the whole engine (SIGTRAP,
-    // "Initialization of all EGL display types failed"). Web wallpapers can be swapped in at any
-    // time, so pay the helper-process cost up front regardless of the initial background type.
+    // Init CEF here before the GL/EGL context exists: a late CefInitialize (live web-wallpaper swap)
+    // aborts the engine. Pay the helper-process cost up front regardless of initial background type.
     if (this->m_browserContext) {
 	return;
     }
@@ -540,9 +534,8 @@ bool WallpaperApplication::captureScreenshot (const std::filesystem::path& path)
 	return false;
     }
 
-    // Reuse the same FBO-readback path the startup --screenshot uses; we're on the render thread
-    // (control socket is polled at the top of render()), so the GL context is current and the
-    // wallpaper FBO holds the last rendered frame.
+    // Reuse the startup --screenshot FBO-readback path; we're on the render thread so the GL context
+    // is current and the wallpaper FBO holds the last rendered frame.
     this->takeScreenshot (path);
     return true;
 }
@@ -588,8 +581,8 @@ void WallpaperApplication::takeScreenshot (const std::filesystem::path& filename
 	// ensure rendering is complete before reading
 	glFinish ();
 
-	// make room for storing the pixel of this viewport. The scene framebuffer is allocated at the
-	// supersampled size (--render-scale), so read it back at that resolution to capture the whole frame.
+	// make room for storing the pixel of this viewport. The FBO is at the supersampled
+	// (--render-scale) size, so read it back at that resolution to capture the whole frame.
 	const float renderScale = wallpaper->getRenderScale ();
 	const int readWidth = static_cast<int> (std::lround (wallpaper->getWidth () * renderScale));
 	const int readHeight = static_cast<int> (std::lround (wallpaper->getHeight () * renderScale));
@@ -697,11 +690,8 @@ void WallpaperApplication::setupOutput () {
 }
 
 void WallpaperApplication::setupAudio () {
-    // Capture audio whenever audio processing is enabled — not only when the
-    // INITIAL background needs it. With the control socket, backgrounds are
-    // swapped live without re-running setup, so a wallpaper switched in later
-    // must still get a real recorder (otherwise audio-reactive elements get no
-    // data and never react).
+    // Capture audio whenever processing is enabled, not only when the initial background needs it:
+    // backgrounds swapped in live must still get a real recorder or audio-reactive elements stay dead.
     if (this->m_context.settings.audio.audioprocessing) {
 	this->m_audioRecorder
 	    = std::make_unique<WallpaperEngine::Audio::Drivers::Recorders::PulseAudioPlaybackRecorder> (
@@ -838,8 +828,7 @@ void WallpaperApplication::setup () {
     this->prepareOutputs ();
     this->setupOpenGLDebugging ();
 
-    // Apply runtime state that isn't baked in at wallpaper creation (video
-    // volume/mute and playback speed) so the very first frame already honors it.
+    // Apply runtime state not baked in at creation (volume/mute, playback speed) so frame 1 honors it.
     this->applyAudioVolume ();
     this->applyPlaybackSpeed ();
 
@@ -908,13 +897,13 @@ void WallpaperApplication::render () {
 
 	// keep track of the previous frame's time
 	g_TimeLast = g_Time;
-	// calculate the current time value, scaled by the configured playback speed
-	// (1.0 = normal). Scaling the clock makes scenes/particles animate faster or
-	// slower without affecting the render FPS.
+	// calculate the current time value, scaled by playback speed (1.0 = normal); scaling the
+	// clock animates scenes/particles faster or slower without affecting the render FPS.
 	{
 	    float playbackSpeed = this->m_context.settings.render.playbackSpeed;
-	    if (playbackSpeed <= 0.0f)
+	    if (playbackSpeed <= 0.0f) {
 		playbackSpeed = 1.0f;
+	    }
 	    g_Time = m_videoDriver->getRenderTime () * playbackSpeed;
 	}
 	// update audio recorder
@@ -1058,8 +1047,8 @@ bool WallpaperApplication::setBackground (const std::string& screen, const std::
 	}
 
 	this->m_context.settings.general.screenBackgrounds[screen] = path;
-	this->applyAudioVolume ();    // keep the new wallpaper in sync with volume/mute
-	this->applyPlaybackSpeed ();  // ...and with playback speed
+	this->applyAudioVolume (); // keep the new wallpaper in sync with volume/mute
+	this->applyPlaybackSpeed (); // ...and with playback speed
 	return true;
     } catch (const std::exception& e) {
 	sLog.error ("setBackground failed on ", screen, ": ", e.what ());
@@ -1068,11 +1057,8 @@ bool WallpaperApplication::setBackground (const std::string& screen, const std::
 }
 
 namespace {
-// An effect's visibility is decided once when the image's pass list is assembled (CImage::setup),
-// so a property that gates an effect's `visible` condition needs the wallpaper rebuilt to add/remove
-// that effect's passes. Everything else — shader constants/uniforms, the camera fov, and per-object
-// `visible` conditions (all read live each frame) — updates without any rebuild. Walk the scene's
-// image effects to see whether this property is one of the rebuild-requiring ones.
+// An effect's visibility is fixed when its image pass list is built (CImage::setup), so a property
+// gating an effect's `visible` condition needs a rebuild; other live-read properties don't.
 bool propertyGatesEffectVisibility (const Project& project, const std::string& key) {
     if (project.wallpaper == nullptr || !project.wallpaper->is<Scene> ()) {
 	return false;
@@ -1096,8 +1082,9 @@ bool propertyGatesEffectVisibility (const Project& project, const std::string& k
 
 bool WallpaperApplication::setProperty (const std::string& screen, const std::string& key, const std::string& value) {
     const auto bg = this->m_backgrounds.find (screen);
-    if (bg == this->m_backgrounds.end ())
+    if (bg == this->m_backgrounds.end ()) {
 	return false;
+    }
 
     // Only accept keys the current wallpaper actually declares.
     const auto propertyIt = bg->second->properties.find (key);
@@ -1108,16 +1095,12 @@ bool WallpaperApplication::setProperty (const std::string& screen, const std::st
     // Record the override so it survives future reloads / relaunches.
     this->m_context.settings.general.properties[key] = value;
 
-    // Live update: push the value into the property's DynamicValue. It propagates to every connected
-    // shader constant/uniform, the camera fov, and per-object `visible` conditions — all of which are
-    // read fresh each frame — so sliders, colours and object-visibility toggles apply with no reload.
+    // Live update: the DynamicValue propagates to shader constants/uniforms, camera fov and per-object
+    // `visible` conditions (all read each frame), so sliders/colours/toggles apply with no reload.
     propertyIt->second->update (value, DynamicValue::UpdateSource::User);
 
-    // Discrete toggles (booleans/combos) usually change scene STRUCTURE decided at build time — an
-    // effect's pass list, the scene-level bloom layer, a shader combo — which a value propagation
-    // can't reach. Rebuild the wallpaper in-process for those (flash-free: the GL context and the
-    // process stay alive). Sliders/colours stay pure live updates so dragging never re-parses, and
-    // conditioned effect visibilities are caught explicitly for any non-discrete source property.
+    // Discrete toggles (bool/combo) usually change build-time scene structure a value update can't
+    // reach, so rebuild in-process (flash-free) for those; sliders/colours stay pure live updates.
     const bool structural = propertyIt->second->is<Data::Model::PropertyBoolean> ()
 	|| propertyIt->second->is<Data::Model::PropertyCombo> ();
 
@@ -1143,41 +1126,46 @@ bool WallpaperApplication::setProperty (const std::string& screen, const std::st
 bool WallpaperApplication::setScreenScaling (const std::string& screen, const std::string& mode) {
     using WallpaperEngine::Render::WallpaperState;
     WallpaperState::TextureUVsScaling value;
-    if (mode == "stretch")
+    if (mode == "stretch") {
 	value = WallpaperState::TextureUVsScaling::StretchUVs;
-    else if (mode == "fit")
+    } else if (mode == "fit") {
 	value = WallpaperState::TextureUVsScaling::ZoomFitUVs;
-    else if (mode == "fill")
+    } else if (mode == "fill") {
 	value = WallpaperState::TextureUVsScaling::ZoomFillUVs;
-    else if (mode == "default")
+    } else if (mode == "default") {
 	value = WallpaperState::TextureUVsScaling::DefaultUVs;
-    else
+    } else {
 	return false;
+    }
 
     this->m_context.settings.general.screenScalings[screen] = value;
     const auto it = this->m_context.settings.general.screenBackgrounds.find (screen);
-    return it != this->m_context.settings.general.screenBackgrounds.end () && this->setBackground (screen, it->second.string ());
+    return it != this->m_context.settings.general.screenBackgrounds.end ()
+	&& this->setBackground (screen, it->second.string ());
 }
 
 bool WallpaperApplication::setScreenClamp (const std::string& screen, const std::string& mode) {
     TextureFlags value;
-    if (mode == "clamp")
+    if (mode == "clamp") {
 	value = TextureFlags_ClampUVs;
-    else if (mode == "border")
+    } else if (mode == "border") {
 	value = TextureFlags_ClampUVsBorder;
-    else if (mode == "repeat")
+    } else if (mode == "repeat") {
 	value = TextureFlags_NoFlags;
-    else
+    } else {
 	return false;
+    }
 
     this->m_context.settings.general.screenClamps[screen] = value;
     const auto it = this->m_context.settings.general.screenBackgrounds.find (screen);
-    return it != this->m_context.settings.general.screenBackgrounds.end () && this->setBackground (screen, it->second.string ());
+    return it != this->m_context.settings.general.screenBackgrounds.end ()
+	&& this->setBackground (screen, it->second.string ());
 }
 
 void WallpaperApplication::applyPlaybackSpeed () {
-    if (!this->m_renderContext)
+    if (!this->m_renderContext) {
 	return;
+    }
 
     for (const auto& [screen, wallpaper] : this->m_renderContext->getWallpapers ()) {
 	wallpaper->setPlaybackSpeed (this->m_context.settings.render.playbackSpeed);
@@ -1190,8 +1178,9 @@ void WallpaperApplication::setPlaybackSpeed (float speed) {
 }
 
 void WallpaperApplication::applyAudioVolume () {
-    if (!this->m_renderContext)
+    if (!this->m_renderContext) {
 	return;
+    }
 
     const int volume = this->m_context.settings.audio.enabled ? this->m_context.settings.audio.volume : 0;
     for (const auto& [screen, wallpaper] : this->m_renderContext->getWallpapers ()) {
@@ -1251,8 +1240,9 @@ std::string WallpaperApplication::controlStatus () const {
     ss << "speed=" << this->m_context.settings.render.playbackSpeed << "\n";
     for (const auto& [screen, project] : this->m_backgrounds) {
 	const auto it = this->m_context.settings.general.screenBackgrounds.find (screen);
-	ss << "screen=" << screen << " bg="
-	   << (it != this->m_context.settings.general.screenBackgrounds.end () ? it->second.string () : "") << "\n";
+	ss << "screen=" << screen
+	   << " bg=" << (it != this->m_context.settings.general.screenBackgrounds.end () ? it->second.string () : "")
+	   << "\n";
     }
     return ss.str ();
 }

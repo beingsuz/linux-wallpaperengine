@@ -45,14 +45,10 @@ public:
     [[nodiscard]] const std::vector<CObject*>& getObjectsByRenderOrder () const;
     [[nodiscard]] const CObject* getObject (int id) const;
 
-    // Runtime layer API — backs thisScene.createLayer()/getLayerIndex()/sortLayer() in the
-    // scripting engine. Audio visualizers (and other generative scripts) spawn their bar layers
-    // at init() time via these; without them the controlling script throws and the placeholder
-    // template renders as a static block.
-    //
-    // createLayer instantiates a new image layer from a model path (e.g. "models/full-pixel.json"),
-    // resolving the script's workshop-scoped asset path when the bare path doesn't exist. Returns the
-    // created object (a scriptable CImage) or nullptr on failure.
+    // Runtime layer API backing thisScene.createLayer()/getLayerIndex()/sortLayer() in scripting;
+    // generative scripts (e.g. audio visualizers) spawn their layers via these or they throw at init().
+    // createLayer instantiates an image layer from a model path, resolving the workshop-scoped asset
+    // when the bare path doesn't exist. Returns the created object or nullptr on failure.
     Render::CObject* createLayer (const std::string& modelPath, const std::string& workshopId);
     // Index of a layer within the scriptable-layer subset of the render order (matches getLayer()/
     // getLayerCount()), or -1 if not present.

@@ -14,20 +14,10 @@
 
 namespace WallpaperEngine::Render::Objects {
 /**
- * Renders a Wallpaper Engine 3D model object (top-level "model" -> .mdl mesh).
- *
- * This runs the wallpaper's OWN material pipeline with no hand-written shading: one
- * Effects::CPass per mesh, compiled from the mesh's real material (generic3) with its real
- * combos / constants / textures. Lighting, rim (RIMLIGHTING), toon ramp (SHADINGGRADIENT),
- * reflection (REFLECTION), colors, alpha and blend/depth/cull all come straight from the
- * wallpaper's material JSON exactly as Wallpaper Engine declares them — a 1:1 port of WE's
- * generic3 path. The scene's ambient/skylight, brightness and reflection buffer are supplied
- * by CPass automatically (same as 2D image layers); the model only adds the camera eye
- * position that generic3.vert needs for its view vector.
- *
- * The 2D compositor is orthographic, so the model uses a perspective camera (from the scene
- * camera) + a depth buffer attached to the scene framebuffer for sub-mesh occlusion (attached
- * only for this object's draw; the 2D layers use no depth).
+ * Renders a Wallpaper Engine 3D model object (.mdl mesh) by running the wallpaper's own material
+ * pipeline (one CPass per mesh, generic3) with no hand-written shading. The model adds only the
+ * camera eye position generic3.vert needs, a perspective camera, and a scene-FBO depth buffer for
+ * sub-mesh occlusion (the 2D compositor is orthographic and uses no depth).
  */
 class CModel final : public CRenderable {
     friend CObject;
@@ -71,8 +61,7 @@ private:
     glm::mat4 m_mvpMatrixInverse = glm::mat4 (1.0f);
     glm::vec3 m_eyePosition = glm::vec3 (0.0f);
 
-    // Neutral CRenderable values (material constants drive g_TintColor/g_TintAlpha; these
-    // identity values feed g_Brightness/g_Alpha/g_Color without adding styling).
+    // Neutral CRenderable identity values; the material constants do the actual styling.
     float m_brightness = 1.0f;
     float m_alpha = 1.0f;
     glm::vec3 m_color = glm::vec3 (1.0f);

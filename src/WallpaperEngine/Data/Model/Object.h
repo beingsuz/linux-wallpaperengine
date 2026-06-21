@@ -22,10 +22,8 @@ namespace WallpaperEngine::Data::Model {
 using namespace WallpaperEngine::Data::Utils;
 
 /**
- * Keyframe animation for an object's transform channel (Wallpaper Engine animates angles/origin via a
- * per-component keyframe track). Only the linear endpoints are kept — the editor bezier tangents aren't
- * needed for the simple sweeps these wallpapers use (e.g. Starscape's 0 -> 2π Y spin). `length` frames
- * play at `fps`; `mode` "mirror" ping-pongs, otherwise it loops; `relative` adds the result to the base.
+ * Per-component keyframe track for `angles`. Linear endpoints only (no bezier tangents);
+ * `mode` "mirror" ping-pongs else loops, `relative` adds the result to the base.
  */
 struct AnglesAnimation {
     struct Channel {
@@ -45,10 +43,8 @@ struct ObjectData {
     int id;
     std::string name;
     /**
-     * Render-order key. Wallpaper Engine gives every object a `sortorder` (default 0); it is only
-     * consulted when the scene sets `customsortorder`, in which case the render list is stable-sorted
-     * by it (otherwise objects keep dependency/declaration order). Matches the binary's object field
-     * at +0x124 (getter FUN_1401a4930).
+     * Render-order key, only consulted when the scene sets `customsortorder` (then the render
+     * list is stable-sorted by it; otherwise objects keep dependency/declaration order).
      */
     int sortorder = 0;
     std::vector<int> dependencies;
@@ -653,9 +649,8 @@ public:
 };
 
 /**
- * A single mesh inside a model's .mdl file: interleaved vertex data (48-byte stride:
- * position[3] + normal[3] + tangent[4] + uv[2]), uint16 indices, and the material the
- * mesh references (parsed from the material JSON named inside the .mdl).
+ * One mesh from a .mdl: interleaved vertex data (48-byte stride: pos[3]+normal[3]+tangent[4]+uv[2]),
+ * uint16 indices, and its material.
  */
 struct ModelMesh {
     std::vector<char> vertexData;
@@ -664,10 +659,8 @@ struct ModelMesh {
 };
 
 /**
- * Scene object that draws a real 3D mesh. Wallpaper Engine references these with a
- * top-level "model" key pointing at a .mdl file (per-mesh materials are stored
- * inside the .mdl itself). The object's transform comes from ObjectData
- * (origin/groupScale/groupAngles/groupVisible).
+ * Scene object that draws a 3D mesh, referenced by a top-level "model" key pointing at a .mdl file.
+ * Per-mesh materials live inside the .mdl; the transform comes from ObjectData.
  */
 struct ModelObjectData {
     /** Path to the .mdl mesh inside the wallpaper package */

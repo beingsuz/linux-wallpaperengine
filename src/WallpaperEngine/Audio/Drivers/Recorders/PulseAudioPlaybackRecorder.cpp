@@ -130,9 +130,8 @@ void pa_server_info_cb (pa_context* ctx, const pa_server_info* info, void* userd
     // setup latency
     pa_buffer_attr attr {};
 
-    // 10 = latency msecs, 750 = max msecs to store. Milliseconds means dividing by 1000 —
-    // the previous /100 requested 100ms fragments, which made audio visualizers update at
-    // ~10Hz and visibly lag behind the music.
+    // 10 = latency msecs, 750 = max msecs to store; /1000 since these are ms (the old /100
+    // requested 100ms fragments, making visualizers update at ~10Hz and lag the music).
     size_t bytesPerSec = pa_bytes_per_second (&spec);
     attr.fragsize = bytesPerSec * 10 / 1000;
     attr.maxlength = attr.fragsize + bytesPerSec * 750 / 1000;
@@ -189,8 +188,8 @@ PulseAudioPlaybackRecorder::PulseAudioPlaybackRecorder (std::string device) :
 	{ .kisscfg = kiss_fftr_alloc (WAVE_BUFFER_SIZE, 0, nullptr, nullptr),
 	  // value-initialize ("()") so silence/failed capture reads as zeros, not
 	  // uninitialized noise (which renders as random audio-reactive particles)
-	  .audioBuffer = new uint8_t[WAVE_BUFFER_SIZE] (),
-	  .audioBufferTmp = new uint8_t[WAVE_BUFFER_SIZE] (),
+	  .audioBuffer = new uint8_t[WAVE_BUFFER_SIZE](),
+	  .audioBufferTmp = new uint8_t[WAVE_BUFFER_SIZE](),
 	  .device = std::move (device) }
     ) {
     this->m_mainloop = pa_mainloop_new ();
@@ -246,12 +245,8 @@ void PulseAudioPlaybackRecorder::update () {
 
     this->m_captureData.fullFrameReady = false;
 
-    // Noise gate: a monitor source is never perfectly silent, and the log-scaled
-    // FFT amplifies that noise floor into visible (random-looking) output. Use
-    // the frame's RMS energy (stable, unlike peak-to-peak which spikes on single
-    // noisy samples) to decide if there's real sound; below the gate we treat it
-    // as silence so audio-reactive wallpapers stay still until audio plays.
-    // Tunable via WPE_AUDIO_GATE (RMS in 0-128 units; 0 disables).
+    // Noise gate: below this RMS, treat the frame as silence (a monitor source is never truly
+    // silent and the log FFT amplifies that into noise). Tunable via WPE_AUDIO_GATE (0 disables).
     float gate = 10.0f;
     if (const char* g = std::getenv ("WPE_AUDIO_GATE")) {
 	gate = std::atof (g);
@@ -266,10 +261,12 @@ void PulseAudioPlaybackRecorder::update () {
 	if (rms < gate) {
 	    for (int i = 0; i < 64; i++) {
 		this->m_FFTdestination64[i] = 0.0f;
-		if (i < 32)
+		if (i < 32) {
 		    this->m_FFTdestination32[i] = 0.0f;
-		if (i < 16)
+		}
+		if (i < 16) {
 		    this->m_FFTdestination16[i] = 0.0f;
+		}
 	    }
 	    return;
 	}

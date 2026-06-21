@@ -41,8 +41,9 @@ ControlSocket::~ControlSocket () {
 }
 
 void ControlSocket::poll (WallpaperApplication& app) {
-    if (m_fd < 0)
+    if (m_fd < 0) {
 	return;
+    }
 
     // Accept and service every pending client without blocking the render loop.
     int client;
@@ -56,12 +57,14 @@ void ControlSocket::poll (WallpaperApplication& app) {
 	ssize_t n;
 	while ((n = read (client, buffer, sizeof (buffer))) > 0) {
 	    request.append (buffer, n);
-	    if (request.find ('\n') != std::string::npos)
+	    if (request.find ('\n') != std::string::npos) {
 		break;
+	    }
 	}
 
-	if (const auto pos = request.find ('\n'); pos != std::string::npos)
+	if (const auto pos = request.find ('\n'); pos != std::string::npos) {
 	    request.erase (pos);
+	}
 
 	if (!request.empty ()) {
 	    const std::string response = this->handle (app, request);
@@ -82,15 +85,18 @@ std::string ControlSocket::handle (WallpaperApplication& app, const std::string&
     const auto rest = [&iss] () {
 	std::string r;
 	std::getline (iss, r);
-	if (!r.empty () && r.front () == ' ')
+	if (!r.empty () && r.front () == ' ') {
 	    r.erase (0, 1);
+	}
 	return r;
     };
 
-    if (cmd == "ping")
+    if (cmd == "ping") {
 	return "pong\n";
-    if (cmd == "status")
+    }
+    if (cmd == "status") {
 	return app.controlStatus ();
+    }
     if (cmd == "speed") {
 	float v = 1.0f;
 	iss >> v;

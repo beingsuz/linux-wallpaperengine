@@ -15,9 +15,8 @@ using namespace WallpaperEngine::WebBrowser;
 int WebBrowserContext::executeSubprocess (int argc, char* argv[]) {
     CefMainArgs main_args (argc, argv);
 
-    // The subprocess only needs to register the fixed wp scheme (the workshop id
-    // travels in the URL host), so no argv scraping or file IO is needed — file IO
-    // would close the inherited ICU data descriptor before CefExecuteProcess reads it.
+    // Subprocess only registers the fixed wp scheme; avoid any file IO here — it would close the
+    // inherited ICU data descriptor before CefExecuteProcess reads it.
     const CefRefPtr<CefApp> app = new CEF::SubprocessApp ();
     const int exitCode = CefExecuteProcess (main_args, app, nullptr);
     // A helper process always terminates here; CefExecuteProcess returns its exit
@@ -66,21 +65,16 @@ WebBrowserContext::WebBrowserContext (WallpaperEngine::Application::WallpaperApp
 	this->m_wallpaperApplication.getContext ().getArgc (), this->m_wallpaperApplication.getContext ().getArgv ()
     );
 
-    // This is only ever reached by the browser process: CEF helper processes are
-    // detected by their --type switch and handed off in executeSubprocess() at the
-    // top of main(). So we always create the browser app and never call
-    // CefExecuteProcess here — invoking it in the browser put content's ICU loader
-    // into "child" mode, making it expect the data via a (never-passed) fd and fail
-    // with "Invalid file descriptor to ICU data received".
+    // Only the browser process reaches here (helpers are handled in executeSubprocess), so never call
+    // CefExecuteProcess here: it puts the ICU loader into "child" mode and fails to find its data fd.
     this->m_browserApplication = new CEF::BrowserApp (wallpaperApplication);
 
     // Configurate Chromium
     CefSettings settings;
     std::string cache_path = (std::filesystem::temp_directory_path () / uuid::generate_uuid_v4 ()).string ();
 
-    // Point CEF at the directory holding its resources (icudtl.dat, *.pak, locales/).
-    // Without these, subprocesses fail to load ICU ("Invalid file descriptor to ICU
-    // data received") and web wallpapers crash. They sit next to the executable.
+    // Point CEF at its resources dir (icudtl.dat, *.pak, locales/) next to the executable;
+    // without it subprocesses fail to load ICU and web wallpapers crash.
     char proc_path[4096];
     const ssize_t proc_len = readlink ("/proc/self/exe", proc_path, sizeof (proc_path) - 1);
     if (proc_len > 0) {
@@ -92,10 +86,8 @@ WebBrowserContext::WebBrowserContext (WallpaperEngine::Application::WallpaperApp
 
     cef_string_utf8_to_utf16 (cache_path.c_str (), cache_path.length (), &settings.root_cache_path);
     settings.windowless_rendering_enabled = true;
-    // Run without the Chromium sandbox. A wallpaper renders local, trusted content,
-    // and the sandbox's fd remapping is what breaks ICU-data loading here ("Invalid
-    // file descriptor to ICU data received"). Disabling it lets every process read
-    // icudtl.dat from resources_dir_path directly.
+    // No sandbox: content is local/trusted, and the sandbox's fd remapping breaks ICU-data loading,
+    // so disabling it lets every process read icudtl.dat from resources_dir_path directly.
     settings.no_sandbox = true;
 
     // spawns two new processess

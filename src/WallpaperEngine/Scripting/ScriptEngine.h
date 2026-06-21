@@ -47,12 +47,9 @@ public:
     struct LoadedModule {
 	DynamicValue& value;
 	JSValue module;
-	// The object the script is attached to (its `thisLayer`). Stored so init()/update() can be
-	// (re)bound to the right layer each call.
+	// The object the script is attached to (its `thisLayer`); rebound each init()/update() call.
 	ScriptableObject* object = nullptr;
-	// init() is deferred to the first tick — at queueScript time (object construction) the scene's
-	// layer list isn't populated yet, so an init() that enumerates getLayerCount()/getLayer() would
-	// see zero layers (the cause of Makima showing every style at once).
+	// init() is deferred to the first tick; the scene's layer list isn't populated at queueScript time.
 	bool inited = false;
     };
     struct JSObjectAdapters {
@@ -71,11 +68,9 @@ public:
     JSContext* getContext () const { return m_context; }
     JSValue getGlobalThis () const { return m_globalThis; }
     LoadedModule* getRunningModule () const { return m_runningModule; }
-    // Workshop id exported by the currently-running script module (`export let __workshopId = '...'`),
-    // or "" if none. Scripts use it to resolve their own workshop-scoped asset paths at runtime.
+    // Workshop id exported by the running module (`__workshopId`), or "" — resolves asset paths.
     [[nodiscard]] std::string getRunningModuleWorkshopId () const;
-    // Fire the scripts' applyUserProperties({key: value}) handler after a live property change, so
-    // script-driven wallpapers react to settings without a reload. No-op for scripts without it.
+    // Fire the scripts' applyUserProperties({key: value}) after a live property change. No-op if absent.
     void dispatchUserProperty (const std::string& key, DynamicValue& value);
     JSValue dynamicToJs (DynamicValue& value) const;
 

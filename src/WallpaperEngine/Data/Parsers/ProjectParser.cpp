@@ -51,11 +51,8 @@ ProjectUniquePtr ProjectParser::parse (const JSON& data, AssetLocatorUniquePtr c
 }
 
 Project::Type ProjectParser::parseType (const std::string& type, const std::string& file) {
-    // Wallpaper Engine decides the wallpaper kind from the main file's extension / URL scheme,
-    // NOT the declared "type" string (which it only stores as a label) — FUN_14011e530. Mirror
-    // that exactly: a scene ships a .json/.pkg file, a video a .mp4/..., web an .html (or a bare
-    // URL), an image a .png/..., an application an .exe. The declared string is only a fallback
-    // for an ambiguous/missing file.
+    // WE decides the wallpaper kind from the main file's extension / URL scheme, not the declared
+    // "type" string (only a label); the declared string is just a fallback for an ambiguous file.
     std::string f = file;
     std::ranges::transform (f, f.begin (), tolower);
 

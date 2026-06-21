@@ -455,9 +455,8 @@ void ShaderUnit::parseComboConfiguration (const std::string& content, const int 
     // const auto type = data.find ("type");
     const auto defvalue = data.find ("default");
 
-    // Record the "require" dependency, e.g. {"combo":"RIMLIGHTING","require":{"LIGHTING":1}}. Wallpaper Engine
-    // only compiles a combo's code path when its requirements hold, so an enabled combo forces its requirement
-    // on (resolved later in resolveComboRequires once every combo's value is known).
+    // Record the "require" dependency (e.g. RIMLIGHTING requires LIGHTING:1); an enabled combo forces
+    // its requirement on, resolved later in resolveComboRequires once all combo values are known.
     if (const auto require = data.find ("require"); require != data.end () && require->is_object ()) {
 	ComboMap requirements;
 	for (const auto& [name, value] : require->items ()) {
@@ -721,10 +720,8 @@ const std::string& ShaderUnit::compile () {
 
     std::map<std::string, bool> addedCombos;
 
-    // Combos forced on by the [COMBO] "require" chain come first so they win over the material/override values.
-    // The linked unit's promotions are emitted too: the [COMBO] annotations live in one unit (usually the
-    // fragment) but the #if guards span both, so vertex and fragment must agree on the promoted combo values or
-    // their varyings desync and the program fails to link.
+    // Promoted (require-chain) combos come first so they win over material/override values. The linked
+    // unit's promotions are emitted too so vertex and fragment agree, or their varyings desync at link.
     const ComboMap* promotedSets[] = {
 	&this->m_promotedCombos,
 	this->m_link != nullptr ? &this->m_link->getPromotedCombos () : nullptr,

@@ -36,9 +36,8 @@ template <int components> struct VectorOpaqueContainer {
     VectorAdapter<components>& adapter;
     DynamicValue& value;
     uint32_t id;
-    // Adapter instance id, used by the finalizer to look the adapter up in the
-    // live registry instead of dereferencing `adapter`, which can dangle if this
-    // object is finalized during runtime teardown (after the adapter was reset).
+    // Adapter instance id: the finalizer looks the adapter up by id rather than dereferencing
+    // `adapter`, which can dangle if this is finalized during runtime teardown.
     uint32_t adapterId;
 };
 
@@ -419,12 +418,8 @@ template <int components> void vector_finalizer (JSRuntime* rt, JSValueConst val
 	return;
     }
 
-    // free the associated DynamicValue if temporal. This can run during runtime
-    // teardown (JS_FreeContext) AFTER the ScriptEngine destroyed the adapters —
-    // e.g. for vectors a script parked on a long-lived object (shared.camera).
-    // Resolve the adapter through the live registry by id rather than touching the
-    // stored reference (which would be dangling); if the adapter is already gone
-    // its m_values owned and freed the DynamicValue, so there is nothing to do.
+    // Free the temporal DynamicValue. May run during teardown after the adapters are gone, so resolve
+    // by id rather than the (possibly dangling) stored reference; if the adapter is gone, nothing to do.
     if (container->id != InvalidVectorInstanceId) {
 	auto it = vectorAdapterInstances<components>.find (container->adapterId);
 

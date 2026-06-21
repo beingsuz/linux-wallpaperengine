@@ -117,10 +117,8 @@ private:
      */
     void parseComboConfiguration (const std::string& content, int defaultValue = 0);
     /**
-     * Resolves the [COMBO] "require" chain. Wallpaper Engine only compiles a combo's code path when its
-     * requirements hold; a material can ship an enabled combo whose requirement it leaves unset (e.g.
-     * RIMLIGHTING:1 / SHADINGGRADIENT:1 with LIGHTING:0). For every enabled combo that declares a
-     * requirement, this forces the required combo to the needed value (transitively), matching WE.
+     * Resolves the [COMBO] "require" chain: forces each enabled combo's required combos to the needed
+     * value (transitively), matching WE (e.g. RIMLIGHTING:1 forces LIGHTING:1).
      */
     void resolveComboRequires ();
     /**

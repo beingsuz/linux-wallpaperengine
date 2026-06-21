@@ -19,7 +19,7 @@ using namespace WallpaperEngine::Render::Objects::Effects;
 using namespace WallpaperEngine::Data::Model;
 
 namespace {
-// Vertex layout inside the .mdl (48-byte stride: pos[3] · normal[3] · tangent[4] · uv[2]).
+// .mdl vertex layout: 48-byte stride (pos[3] normal[3] tangent[4] uv[2]).
 constexpr GLsizei MDL_VERTEX_STRIDE = 48;
 constexpr uintptr_t MDL_POSITION_OFFSET = 0;
 constexpr uintptr_t MDL_NORMAL_OFFSET = 12;
@@ -83,9 +83,8 @@ void CModel::setup () {
 	return;
     }
 
-    // The model materials declare textures:[null]; CRenderable::setup() would deref a null
-    // texture's frames, so resolve a neutral white base texture instead (generic3's albedo
-    // default is util/white anyway) and skip the base setup.
+    // Model materials declare textures:[null], which would deref null in CRenderable::setup();
+    // resolve a neutral white base instead (generic3's albedo default is util/white anyway).
     try {
 	this->m_texture = this->getContext ().resolveTexture ("util/white");
     } catch (const std::exception& e) {
@@ -93,10 +92,8 @@ void CModel::setup () {
     }
 
     this->m_fboProvider = std::make_shared<FBOProvider> (this);
-    // generic3's REFLECTION reads g_Texture3 (= _rt_FullFrameBuffer). Rendering into the scene
-    // FBO while sampling it is a feedback loop, so shadow the scene FBO with a same-named copy
-    // that we blit into before drawing (mirrors CParticle's REFRACT handling). Lets us run the
-    // material's real REFLECTION combo instead of overriding it off.
+    // generic3's REFLECTION samples the scene FBO it's drawing into (a feedback loop), so shadow
+    // it with a same-named copy we blit into before drawing (mirrors CParticle's REFRACT).
     const auto sceneFBO = this->getScene ().getFBO ();
     const glm::vec2 fboSize (
 	static_cast<float> (sceneFBO->getRealWidth ()), static_cast<float> (sceneFBO->getRealHeight ())
@@ -104,18 +101,12 @@ void CModel::setup () {
     this->m_reflectionFBO = this->m_fboProvider->create (
 	"_rt_FullFrameBuffer", TextureFormat_ARGB8888, TextureFlags_ClampUVs, 1.0f, fboSize, fboSize
     );
-    // generic3's reflection sampler (g_Texture3) defaults to "_rt_MipMappedFrameBuffer", so register the
-    // shadow copy under that name too. Without this the pass resolves the name through the parent provider
-    // to the live scene FBO and samples the very target it's drawing into (a feedback loop that corrupts
-    // the model once the scene has prior content/mipmaps — e.g. after the bloom layer runs).
+    // g_Texture3 defaults to "_rt_MipMappedFrameBuffer"; alias it to the shadow copy too, else the
+    // pass resolves it to the live scene FBO and feedback-loops on its own target.
     this->m_fboProvider->alias ("_rt_MipMappedFrameBuffer", "_rt_FullFrameBuffer");
 
-    // Build meshes in the .mdl's declaration order — the order Wallpaper Engine draws them in. The
-    // order is load-bearing: Starscape's first mesh is the opaque black figure body and the second is
-    // the white water/ripple/aura shell. Drawing the figure first lets it write depth so the white
-    // shell behind it fails the depth test over the body and only shows at the silhouette (the thin
-    // rim). Reordering by translucency (opaque-first) instead lets the white shell occlude the black
-    // figure, turning the whole body white.
+    // Draw in .mdl declaration order (what WE does); it's load-bearing for depth — e.g. Starscape's
+    // opaque body must draw before the translucent shell or the shell occludes it and the body whitens.
     for (const auto& source : this->m_model.meshes) {
 	if (source.material != nullptr && !source.material->passes.empty ()) {
 	    this->setupMesh (source);
@@ -130,8 +121,7 @@ void CModel::setupMesh (const ModelMesh& source) {
     Mesh mesh;
     mesh.indexCount = static_cast<GLsizei> (source.indices.size ());
 
-    // Build the pass from the mesh's REAL material (generic3 + its combos/constants/textures).
-    // Nothing about the shading is overridden here — the wallpaper's material drives everything.
+    // Build the pass from the mesh's real material; nothing about the shading is overridden here.
     mesh.pass = new CPass (
 	*this, this->m_fboProvider, *source.material->passes.front (), std::nullopt, std::nullopt, std::nullopt
     );
@@ -179,10 +169,8 @@ void CModel::setupMesh (const ModelMesh& source) {
     mesh.pass->setViewProjectionMatrix (&this->m_viewProjectionMatrix);
     mesh.pass->setModelViewProjectionMatrix (&this->m_mvpMatrix);
     mesh.pass->setModelViewProjectionMatrixInverse (&this->m_mvpMatrixInverse);
-    // The one uniform generic3.vert needs that the 2D pass path doesn't set: the camera eye
-    // position (for the per-vertex view direction v_ViewDir). This is scene-camera data, not a
-    // styling choice — everything else (combos, ambient, colors, textures, blend/depth) comes
-    // straight from the material/scene via CPass.
+    // The one uniform generic3.vert needs that the 2D pass path doesn't: the camera eye position
+    // (for v_ViewDir). Everything else comes from the material/scene via CPass.
     mesh.pass->addUniform ("g_EyePosition", &this->m_eyePosition);
 
     const GLuint vao = mesh.vao;
@@ -229,9 +217,8 @@ glm::mat4 CModel::computeModelMatrix () const {
 	? this->m_model.groupAngles->value->getVec3 ()
 	: glm::vec3 (0.0f);
 
-    // Apply the keyframe angles animation (e.g. Starscape's slow 0 -> 2π Y spin). Fold playback time
-    // into the [0, length] keyframe range — "mirror" ping-pongs, anything else loops — then linearly
-    // interpolate each channel. relative:true adds the result on top of the static base angles.
+    // Apply the keyframe angles animation: fold time into [0, length] ("mirror" ping-pongs, else
+    // loops), interpolate each channel; relative:true adds it on top of the base angles.
     if (const auto& anim = this->m_model.anglesAnimation; anim.present && anim.length > 0.0f) {
 	float frame = this->getScene ().getTime () * anim.fps;
 	if (anim.mode == "mirror") {
@@ -290,8 +277,7 @@ void CModel::render () {
     const glm::vec3 eye = camera.getEye ();
     const glm::vec3 center = camera.getCenter ();
     glm::mat4 projection = glm::perspective (glm::radians (fov), aspect, nearZ, farZ);
-    // The scene framebuffer uses a top-left (Y-down) origin like the 2D layers; flip
-    // clip-space Y so the model stays upright relative to the rest of the scene.
+    // Scene FBO is Y-down like the 2D layers; flip clip-space Y to keep the model upright.
     projection[1][1] *= -1.0f;
     const glm::mat4 view = glm::lookAt (eye, center, camera.getUp ());
 
@@ -303,8 +289,7 @@ void CModel::render () {
 
     const auto sceneFBO = this->getScene ().getFBO ();
 
-    // Snapshot the scene-so-far into the reflection copy FBO so generic3's REFLECTION samples
-    // a stable image instead of feedback-looping on the scene FBO it's drawing into.
+    // Snapshot the scene-so-far into the reflection copy so REFLECTION samples a stable image.
     if (this->m_reflectionFBO != nullptr) {
 	const auto w = static_cast<GLint> (sceneFBO->getRealWidth ());
 	const auto h = static_cast<GLint> (sceneFBO->getRealHeight ());
@@ -313,28 +298,21 @@ void CModel::render () {
 	glBlitFramebuffer (0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
     }
 
-    // Attach a private depth buffer to the scene framebuffer so the model's sub-meshes occlude
-    // each other; the 2D layers use no depth, so detach it afterwards.
+    // Attach a private depth buffer so the model's sub-meshes occlude each other; 2D layers use
+    // no depth, so it's detached afterwards.
     this->ensureDepthBuffer (sceneFBO->getRealWidth (), sceneFBO->getRealHeight ());
     glBindFramebuffer (GL_FRAMEBUFFER, sceneFBO->getFramebuffer ());
     glFramebufferRenderbuffer (GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, this->m_depthRenderbuffer);
-    // glClear only touches the depth buffer when depth writes are enabled. A preceding 2D layer/effect
-    // pass (e.g. the bloom/coloring layer) leaves glDepthMask(GL_FALSE), which would silently turn this
-    // clear into a no-op — the model would then test against last frame's stale depth and discard most of
-    // its fragments from the second frame on. Force the mask on before clearing.
+    // glClear only clears depth when depth writes are on; a prior 2D pass may leave glDepthMask(FALSE),
+    // which would no-op the clear and leave stale depth. Force the mask on before clearing.
     glEnable (GL_DEPTH_TEST);
     glDepthMask (GL_TRUE);
     glClear (GL_DEPTH_BUFFER_BIT);
 
-    // The clip-space Y flip above (projection[1][1] *= -1) mirrors the image, which REVERSES triangle
-    // winding. The material's back-face culling (cullmode "normal" -> glCullFace(GL_BACK) against the
-    // default GL_CCW front) would then cull the real front faces and keep the far/inner surface, so an
-    // opaque mesh stops occluding the meshes behind it (e.g. the white water/aura shell shows through
-    // over the black figure body). Declare clockwise as front-facing while the model draws to undo the
-    // mirror, then restore the scene default.
+    // The Y flip above mirrors the image, reversing triangle winding, so back-face culling would cull
+    // the real front faces. Declare CW as front-facing while the model draws, restored below.
     // Restore the shared GL state the 2D layers expect (no depth, CCW front) and detach our depth
-    // buffer. Run it even if a mesh pass throws, so a failing model can't leave depth/winding state
-    // that corrupts the 2D layers rendered after it.
+    // buffer, even on throw, so a failing model can't corrupt the 2D layers drawn after it.
     const auto restoreSceneState = [&] () {
 	glFrontFace (GL_CCW);
 	glDisable (GL_DEPTH_TEST);
@@ -345,10 +323,8 @@ void CModel::render () {
 
     glFrontFace (GL_CW);
 
-    // Run each mesh's real generic3 pass in .mdl declaration order (matching Wallpaper Engine). CPass
-    // binds the destination FBO, applies the material's blend/depth/cull, sets all the scene/material
-    // uniforms (ambient, skylight, brightness, tint color/alpha, metallic, roughness, reflection
-    // texture, the combos) and draws the mesh via the geometry callback.
+    // Run each mesh's real generic3 pass in .mdl declaration order; CPass handles FBO/blend/depth/cull,
+    // all scene+material uniforms, and the draw.
     try {
 	for (const auto& mesh : this->m_meshes) {
 	    mesh.pass->render ();

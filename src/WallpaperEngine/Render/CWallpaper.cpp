@@ -1,9 +1,9 @@
-#include <algorithm>
 #include "CWallpaper.h"
 #include "WallpaperEngine/Logging/Log.h"
 #include "WallpaperEngine/Render/Wallpapers/CScene.h"
 #include "WallpaperEngine/Render/Wallpapers/CVideo.h"
 #include "WallpaperEngine/Render/Wallpapers/CWeb.h"
+#include <algorithm>
 
 #include "WallpaperEngine/Data/Model/Project.h"
 #include "WallpaperEngine/Data/Model/Wallpaper.h"

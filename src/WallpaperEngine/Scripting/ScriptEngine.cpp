@@ -254,9 +254,8 @@ ScriptEngine::ScriptEngine (Wallpapers::CScene& scene, Media::MediaSource& media
 
 ScriptEngine::~ScriptEngine () {
     this->m_unregisterMediaUpdateCallback ();
-    // also drop the album-art listener: it captures `this`, and scenes are destroyed and recreated
-    // on every in-process wallpaper rebuild — a leaked registration turns the next album-art update
-    // into a call through a dangling pointer
+    // Drop the album-art listener: it captures `this`, and a leaked registration would call through a
+    // dangling pointer after the scene is rebuilt.
     this->m_unregisterAlbumArtUpdateCallback ();
 
     for (const auto& module : this->m_scriptModules | std::views::values) {
@@ -637,11 +636,8 @@ void ScriptEngine::queueScript (const std::string& key, DynamicValue& currentVal
 	return;
     }
 
-    // Compile the module first, then evaluate it and grab its export namespace.
-    // JS_Eval of a module returns the *evaluation result*, not the namespace, so
-    // the exported init()/update() functions are not reachable on it (they'd
-    // resolve to undefined and every property script would silently no-op). The
-    // correct value to call exports on is the module namespace.
+    // Compile, evaluate, then grab the module namespace: JS_Eval returns the evaluation result, not
+    // the namespace, so exports (init/update) aren't reachable on it.
     JSValue compiled = JS_Eval (
 	this->m_context, source->c_str (), source->size (), key.c_str (),
 	JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY
@@ -654,15 +650,8 @@ void ScriptEngine::queueScript (const std::string& key, DynamicValue& currentVal
 
     JSModuleDef* moduleDef = static_cast<JSModuleDef*> (JS_VALUE_GET_PTR (compiled));
 
-    // Register the module entry *before* evaluating the body and point
-    // m_runningModule at it. Scripts commonly build their property bag at module
-    // top level (`var scriptProperties = createScriptProperties()…finish()`), and
-    // finish() resolves the values off getRunningModule()->value. If we evaluated
-    // the body first and only set m_runningModule afterwards, finish() would see
-    // nullptr and return undefined, so the very next line (`scriptProperties.x`)
-    // throws "cannot read property of undefined". The namespace isn't available
-    // until after evaluation, so it's patched in below; init()/update() (the only
-    // consumers of .module) run later still.
+    // Register the entry and set m_runningModule *before* evaluating the body: scripts build their
+    // property bag at top level via finish(), which reads getRunningModule()->value.
     auto inserted = this->m_scriptModules.emplace (
 	key,
 	LoadedModule {
@@ -679,8 +668,7 @@ void ScriptEngine::queueScript (const std::string& key, DynamicValue& currentVal
 
     this->m_runningModule = &inserted.first->second;
 
-    // Evaluate the module body (runs top-level statements like
-    // engine.registerAudioBuffers()). JS_EvalFunction consumes `compiled`.
+    // Evaluate the module body. JS_EvalFunction consumes `compiled`.
     JSValue evalResult = JS_EvalFunction (this->m_context, compiled);
     if (JS_IsException (evalResult)) {
 	logJSException (this->m_context, key.c_str ());
@@ -693,8 +681,7 @@ void ScriptEngine::queueScript (const std::string& key, DynamicValue& currentVal
 
     // Drain the job queue so a module evaluating asynchronously finishes.
     JSContext* pctx = nullptr;
-    while (JS_ExecutePendingJob (JS_GetRuntime (this->m_context), &pctx) > 0) {
-    }
+    while (JS_ExecutePendingJob (JS_GetRuntime (this->m_context), &pctx) > 0) { }
 
     JSValue module = JS_GetModuleNamespace (this->m_context, moduleDef);
     if (JS_IsException (module)) {
@@ -706,10 +693,8 @@ void ScriptEngine::queueScript (const std::string& key, DynamicValue& currentVal
 
     inserted.first->second.module = module;
 
-    // init() and the first update() are deferred to the first tick (see LoadedModule::inited): at this
-    // point the object is still being constructed and the scene's layer list isn't populated, so a
-    // script that enumerates getLayerCount()/getLayer() in init() would see zero layers. tick() runs
-    // init() once (with the layer list ready) and then update() every frame.
+    // init()/first update() are deferred to the first tick (LoadedModule::inited): the scene's layer
+    // list isn't populated yet here, so init() would otherwise see zero layers.
 }
 
 void ScriptEngine::tick () {

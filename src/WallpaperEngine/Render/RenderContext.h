@@ -47,12 +47,8 @@ namespace Render {
 	[[nodiscard]] const Drivers::VideoDriver& getDriver () const;
 	[[nodiscard]] const Drivers::Output::Output& getOutput () const;
 	/**
-	 * Output size captured the first time it is requested. Scenes with an automatic orthogonal
-	 * projection and no measurable objects fall back to this instead of the live output size so an
-	 * in-process wallpaper rebuild (live property change, control-socket bg swap) sizes its
-	 * framebuffers exactly like the original build — the live size can differ between those moments
-	 * (surface configure timing, window re-tiling) and a scene rebuilt at a different size than its
-	 * first build breaks the effect-composite chain.
+	 * Output size captured on first request; used as a fallback so an in-process rebuild sizes its
+	 * framebuffers like the original build (live size can drift and break the effect-composite chain).
 	 */
 	[[nodiscard]] glm::ivec2 getStableOutputSize () const;
 	[[nodiscard]] std::shared_ptr<const TextureProvider> resolveTexture (const std::string& name) const;

@@ -24,8 +24,7 @@ CParticle::CParticle (Wallpapers::CScene& scene, const Particle& particle) :
     this->registerProperty ("angles", *particle.angles->value);
     this->registerProperty ("visible", *particle.visible->value);
     this->registerProperty ("parallaxDepth", *particle.parallaxDepth->value);
-    // Emission rate can be script-driven (audio-reactive particles); register it
-    // so its script runs and updates the value, which the emitters read live.
+    // Emission rate can be script-driven; register it so its script runs and emitters read it live.
     this->registerProperty ("rate", *particle.instanceOverride.rate->value);
 
     this->detectTexture ();
@@ -377,9 +376,8 @@ float CParticle::sampleAudio (int mode, int freqStart, int freqEnd, int exponent
 
     const auto& recorder = getScene ().getAudioContext ().getRecorder ();
 
-    // audio64 holds 64 normalized spectrum bands (0..1). The project's frequency
-    // range may be band indices (>1) or a 0..1 fraction (the defaults are 0..1);
-    // map both onto band indices.
+    // audio64 holds 64 normalized spectrum bands; the project's freq range may be band indices (>1)
+    // or a 0..1 fraction (the default), so map both onto band indices.
     constexpr int bands = 64;
     int start, end;
     if (freqEnd <= 1) {
@@ -469,9 +467,8 @@ EmitterFunc CParticle::createBoxEmitter (const ParticleEmitter& emitter) {
 		}
 	    }
 
-	    // Audio-reactive emission: keep the base rate and *add* extra emission
-	    // with the spectrum level (so the layer still emits when silent and
-	    // bursts with sound — never gates down to a single static particle).
+	    // Audio-reactive emission: add to the base rate (never gate it off) so the layer still emits
+	    // when silent and bursts with sound.
 	    float audioFactor = 1.0f;
 	    if (emitter.audioProcessingMode > 0) {
 		audioFactor += 3.0f
@@ -488,8 +485,8 @@ EmitterFunc CParticle::createBoxEmitter (const ParticleEmitter& emitter) {
 		instantaneousEmitted = true;
 	    }
 
-	    // Rate-based emission with optional cap at 1 per frame. Read the rate
-	    // live so script-driven (e.g. audio-reactive) rate overrides apply.
+	    // Rate-based emission with optional cap at 1 per frame. Read the rate live so script-driven
+	    // overrides apply.
 	    if (emitter.rate > 0.0f) {
 		const float rate = emitter.rate * this->m_particle.instanceOverride.rate->value->getFloat ();
 		emissionTimer += dt * rate * audioFactor;
@@ -601,8 +598,8 @@ EmitterFunc CParticle::createSphereEmitter (const ParticleEmitter& emitter) {
 		);
 	}
 
-	// Rate-based emission with optional cap at 1 per frame. Read the rate live
-	// so script-driven (e.g. audio-reactive) rate overrides apply each frame.
+	// Rate-based emission with optional cap at 1 per frame. Read the rate live so script-driven
+	// overrides apply.
 	const float rate = emitter.rate * this->m_particle.instanceOverride.rate->value->getFloat ();
 	emissionTimer += dt * rate * audioFactor;
 	uint32_t toEmit = static_cast<uint32_t> (emissionTimer);
@@ -1295,8 +1292,7 @@ OperatorFunc CParticle::createTurbulenceOperator (const TurbulenceOperator& op) 
     DynamicValue* phaseMaxValue = op.phaseMax->value.get ();
     DynamicValue* speedOverride = m_particle.instanceOverride.speed->value.get ();
 
-    // Audio processing: when enabled, turbulence intensity follows the spectrum
-    // so particles only swirl while sound plays.
+    // Audio processing: when enabled, the spectrum level intensifies turbulence (see below).
     const int audioMode = static_cast<int> (op.audioProcessingMode->value->getFloat ());
     const int audioFreqStart = static_cast<int> (op.audioProcessingFrequencyStart->value->getFloat ());
     const int audioFreqEnd = static_cast<int> (op.audioProcessingFrequencyEnd->value->getFloat ());
@@ -1308,8 +1304,8 @@ OperatorFunc CParticle::createTurbulenceOperator (const TurbulenceOperator& op) 
     const float turbSpeed
 	= WallpaperEngine::Maths::randomFloat (m_rng, speedMinValue->getFloat (), speedMaxValue->getFloat ());
 
-    return [this, scaleValue, timeScaleValue, maskValue, speedOverride, phase, turbSpeed, audioMode,
-	    audioFreqStart, audioFreqEnd, audioExponent] (
+    return [this, scaleValue, timeScaleValue, maskValue, speedOverride, phase, turbSpeed, audioMode, audioFreqStart,
+	    audioFreqEnd, audioExponent] (
 	       std::vector<ParticleInstance>& particles, uint32_t count, const std::vector<ControlPointData>&,
 	       float currentTime, float dt
 	   ) {
@@ -1322,8 +1318,8 @@ OperatorFunc CParticle::createTurbulenceOperator (const TurbulenceOperator& op) 
 	    return;
 	}
 
-	// Audio-reactive: keep the base turbulence and intensify it with the
-	// spectrum level (never gate it off, or particles collapse to a point).
+	// Audio-reactive: intensify on top of the base turbulence (never gate it off, or particles
+	// collapse to a point).
 	float audioFactor = 1.0f;
 	if (audioMode > 0) {
 	    audioFactor += 3.0f * this->sampleAudio (audioMode, audioFreqStart, audioFreqEnd, audioExponent);

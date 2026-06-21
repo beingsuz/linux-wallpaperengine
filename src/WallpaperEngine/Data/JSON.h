@@ -36,13 +36,8 @@ class JsonExtensions {
 public:
     using base_type = JSON;
 
-    // Wallpaper Engine scenes are not strict about JSON value types: a number is
-    // frequently stored as a string ("0", "1.5") and a bool as 0/1 or "true".
-    // nlohmann's implicit conversion throws type_error.302 on those mismatches,
-    // which would abort loading an otherwise valid wallpaper. coerce<T>() bridges
-    // the common cases (arithmetic + bool from string/number/bool) and falls back
-    // to the normal implicit conversion for everything else (strings, glm vecs via
-    // operator T(), Color, ...).
+    // WE scenes store numbers/bools loosely (a number as "0"/"1.5", a bool as 0/1/"true"), which
+    // nlohmann's implicit conversion would throw on. coerce<T> bridges those; other types fall through.
     template <typename T> [[nodiscard]] static T coerce (const base_type& value) {
 	if constexpr (std::is_same_v<T, bool>) {
 	    if (value.is_boolean ()) {
@@ -134,10 +129,8 @@ public:
 	    return std::nullopt;
 	}
 
-	// These accessors are noexcept; a genuinely incompatible value would otherwise
-	// throw and std::terminate the whole engine mid-load. coerce<T> handles the
-	// common number-as-string case; the catch keeps any other mismatch from being
-	// fatal (the field is simply treated as absent).
+	// noexcept: an incompatible value would otherwise terminate the engine mid-load,
+	// so any mismatch coerce<T> can't handle is treated as an absent field.
 	try {
 	    return coerce<T> (*it);
 	} catch (const std::exception&) {

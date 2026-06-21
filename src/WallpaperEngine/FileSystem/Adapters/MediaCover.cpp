@@ -31,16 +31,15 @@ ReadStreamSharedPtr MediaCoverAdapter::open (const std::filesystem::path& path) 
     } else if (album.starts_with ("http://") || album.starts_with ("https://")) {
 	// Remote art (e.g. Spotify's https://i.scdn.co/...): fetch it into a per-URL cache file.
 	// Blocking with a short timeout, but this only runs when the track's art actually changes.
-	if (album.find_first_not_of (
-		"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:/.?=&%_~+-"
-	    ) != std::string::npos) {
+	if (album.find_first_not_of ("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:/.?=&%_~+-")
+	    != std::string::npos) {
 	    throw std::filesystem::filesystem_error (
 		"Media cover URL has unexpected characters", album, std::error_code ()
 	    );
 	}
 
 	const auto cache = std::filesystem::temp_directory_path ()
-	    / ("lwe-art-" + std::to_string (std::hash<std::string> {} (album)));
+	    / ("lwe-art-" + std::to_string (std::hash<std::string> {}(album)));
 
 	if (!std::filesystem::exists (cache)) {
 	    const std::string command = "curl -fsm 3 -o '" + cache.string () + "' '" + album + "'";

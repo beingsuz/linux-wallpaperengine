@@ -43,9 +43,8 @@ public:
     virtual void update (const std::string& value, UpdateSource source) = 0;
     [[nodiscard]] virtual std::string dump () const = 0;
     /**
-     * Machine-readable description of the property + its current value, for external consumers
-     * (the AGS settings UI talks to the engine through this). Shape per type:
-     *   { "key", "type", "text", "order", "value", [slider: "min","max","step"], [combo: "options"[]] }
+     * Machine-readable description of the property + its value, for external consumers (the AGS
+     * settings UI). Common keys: key/type/text/order/value (+ slider min/max/step, combo options[]).
      */
     [[nodiscard]] virtual nlohmann::json dumpJson () const = 0;
 

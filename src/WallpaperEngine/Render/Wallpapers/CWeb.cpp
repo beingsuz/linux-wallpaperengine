@@ -109,10 +109,8 @@ std::string hex (int r, int g, int b) {
     return buf;
 }
 
-// A vibrant representative colour of the album art for the page's theming (glow,
-// gradient). Saturation- and brightness-weighted so it picks the cover's accent
-// instead of a muddy average; this is what Wallpaper Engine's primaryColor does.
-// Returns the vivid {r,g,b}.
+// A vibrant accent colour of the album art for page theming (WE's primaryColor): saturation- and
+// brightness-weighted so it picks the cover's accent instead of a muddy average.
 std::array<int, 3> dominantColor (const std::string& bytes) {
     int w = 0, h = 0, n = 0;
     stbi_uc* px = stbi_load_from_memory (
@@ -142,8 +140,7 @@ std::array<int, 3> dominantColor (const std::string& bytes) {
 	return { 200, 200, 200 };
     }
     int r = static_cast<int> (rs / wsum), g = static_cast<int> (gs / wsum), b = static_cast<int> (bs / wsum);
-    // Album art is often dark, so the raw accent comes out near-black. Lift it to a
-    // vivid level (preserving hue) so it reads as a real coloured accent.
+    // Dark art yields a near-black accent; lift it (preserving hue) so it reads as a real colour.
     const int mx = std::max ({ r, g, b });
     if (mx > 0 && mx < 170) {
 	const double f = 170.0 / mx;
@@ -248,8 +245,8 @@ void CWeb::pushBridgeData () {
     audio += "])";
     frame->ExecuteJavaScript (audio, url, 0);
 
-    // Properties: deliver the wallpaper's property values once (the page may wait
-    // for applyUserProperties before initialising). Typed per WE's format.
+    // Properties: deliver the wallpaper's typed property values once (the page may wait for
+    // applyUserProperties before initialising).
     if (!this->m_propertiesSent) {
 	this->m_propertiesSent = true;
 	std::string props = "{";
@@ -286,9 +283,7 @@ void CWeb::pushBridgeData () {
 	frame->ExecuteJavaScript ("window.__wpApplyProps&&window.__wpApplyProps(" + props + ")", url, 0);
     }
 
-    // Media (now-playing): sourced from the engine's native DBus/MPRIS Media::MediaSource
-    // (the app updates it on its own DBus interval), shared with the scene album-art path.
-    // Deliver to the page's listeners ~twice a second.
+    // Media (now-playing) from the native MPRIS MediaSource, delivered to the page ~twice a second.
     if (this->m_frame % 30 == 0) {
 	const auto& info = this->getContext ().getMediaSource ().getMediaInfo ();
 	if (info.available) {
@@ -305,8 +300,8 @@ void CWeb::pushBridgeData () {
 	    // MPRIS position/duration are microseconds; the page's timeline expects seconds.
 	    frame->ExecuteJavaScript (
 		"window.__wpMediaTimeline&&window.__wpMediaTimeline({position:"
-		    + std::to_string (info.position / 1000000.0) + ",duration:"
-		    + std::to_string (info.duration / 1000000.0) + "})",
+		    + std::to_string (info.position / 1000000.0)
+		    + ",duration:" + std::to_string (info.duration / 1000000.0) + "})",
 		url, 0
 	    );
 	    const std::string artUrl = info.url.value_or ("");
@@ -316,10 +311,8 @@ void CWeb::pushBridgeData () {
 		const std::string bytes = loadArtBytes (artUrl, mime);
 		if (!bytes.empty ()) {
 		    const std::string dataUrl = "data:" + mime + ";base64," + base64 (bytes);
-		    // WE thumbnail events carry primary + secondary + text colours.
-		    // The page builds gradients from primary->secondary, so all are
-		    // required (an undefined secondary makes the gradient invalid and
-		    // the wallpaper falls back to its hard-coded default theme).
+		    // WE thumbnail events carry primary+secondary+text colours; all are required or the
+		    // page's primary->secondary gradient breaks and falls back to its default theme.
 		    const auto c = dominantColor (bytes);
 		    const std::string primary = hex (c[0], c[1], c[2]);
 		    const std::string secondary = hex (c[0] * 4 / 10, c[1] * 4 / 10, c[2] * 4 / 10);
@@ -331,10 +324,8 @@ void CWeb::pushBridgeData () {
 			url, 0
 		    );
 		} else if (artUrl.rfind ("http", 0) == 0) {
-		    // Remote art (e.g. Spotify's https://i.scdn.co/...): there's no HTTP client here,
-		    // but the page runs with web security disabled and can load the image itself, so
-		    // pass the URL through. Theme colours can't be derived without the pixels — send
-		    // a neutral dark palette so the page's gradient stays valid.
+		    // Remote art (e.g. Spotify https): no HTTP client here, so pass the URL through for the
+		    // page to load. Send a neutral palette since theme colours need the pixels.
 		    frame->ExecuteJavaScript (
 			"window.__wpMediaThumb&&window.__wpMediaThumb({thumbnail:\"" + jsEscape (artUrl)
 			    + "\",primaryColor:\"#5a7d9a\",secondaryColor:\"#24323e\",textColor:\"#ffffff\"})",
@@ -382,11 +373,8 @@ void CWeb::updateMouse (const glm::ivec4& viewport) {
 }
 
 CWeb::~CWeb () {
-    // Force-close the browser, then pump CEF so the (asynchronous) close actually runs while our
-    // render handler is still alive. The render handler and client are CEF ref-counted: our
-    // CefRefPtr members drop their references on destruction and CEF releases its own when the
-    // close completes. The manual delete this used to do put that final release on freed memory,
-    // crashing the engine whenever a web wallpaper was swapped away from.
+    // Force-close the browser, then pump CEF so the async close runs while the (ref-counted) render
+    // handler is still alive; deleting it manually freed it mid-close and crashed on swap-away.
     if (this->m_browser != nullptr) {
 	this->m_browser->GetHost ()->CloseBrowser (true);
 

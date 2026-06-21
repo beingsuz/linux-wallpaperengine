@@ -208,11 +208,8 @@ TextUniquePtr ObjectParser::parseText (const JSON& it, const Project& project, O
 
 ModelObjectUniquePtr
 ObjectParser::parseModel (const JSON& it, const Project& project, ObjectData base, const std::string& mesh) {
-    // Wallpaper Engine 3D model layout (MDLV0017):
-    //   cstring version "MDLV0017" · i32 · i32 · i32 meshCount
-    //   per mesh: cstring materialRef · i32 · float[6] bbox · i32 flags · i32 vbytes
-    //             vertices (48-byte stride: pos[3] · normal[3] · tangent[4] · uv[2])
-    //             i32 ibytes · uint16 indices
+    // WE .mdl layout (MDLV0017): cstring version · i32 · i32 · i32 meshCount, then per mesh
+    // cstring materialRef · i32 · float[6] bbox · i32 flags · i32 vbytes · verts · i32 ibytes · u16 indices.
     std::vector<ModelMesh> meshes;
 
     try {
@@ -221,8 +218,7 @@ ObjectParser::parseModel (const JSON& it, const Project& project, ObjectData bas
 
 	size_t offset = 0;
 	auto readI32 = [&data, &offset] () -> int32_t {
-	    // Guard against a truncated/corrupt .mdl: reading past the buffer would be undefined behaviour.
-	    // Throwing here is caught by the outer try/catch and reported as a load failure instead.
+	    // Guard against a truncated .mdl; the throw is caught below and reported as a load failure.
 	    if (offset + sizeof (int32_t) > data.size ()) {
 		throw std::runtime_error ("unexpected end of model data while reading header");
 	    }
@@ -258,8 +254,7 @@ ObjectParser::parseModel (const JSON& it, const Project& project, ObjectData bas
 		readI32 (); // flags
 
 		const int32_t vertexBytes = readI32 ();
-		// Vertices use the generic3 48-byte stride (pos[3]·normal[3]·tangent[4]·uv[2]); a size
-		// that isn't a whole number of vertices means a corrupt or unsupported mesh layout.
+		// 48-byte vertex stride; a non-multiple means a corrupt or unsupported mesh layout.
 		if (vertexBytes <= 0 || (vertexBytes % 48) != 0
 		    || offset + static_cast<size_t> (vertexBytes) > data.size ()) {
 		    sLog.error ("Invalid vertex block in model mesh ", i, " of ", mesh);
@@ -270,9 +265,8 @@ ObjectParser::parseModel (const JSON& it, const Project& project, ObjectData bas
 		offset += vertexBytes;
 
 		const int32_t indexBytes = readI32 ();
-		// Indices are uint16_t, so the block size must be even — an odd value from a
-		// truncated/corrupt file would otherwise overflow the heap below (resize rounds
-		// down, memcpy copies the full indexBytes).
+		// Indices are uint16_t so the block must be even; an odd value would overflow the
+		// heap below (resize rounds down, memcpy copies the full indexBytes).
 		if (indexBytes <= 0 || (indexBytes % static_cast<int32_t> (sizeof (uint16_t))) != 0
 		    || offset + static_cast<size_t> (indexBytes) > data.size ()) {
 		    sLog.error ("Invalid index block in model mesh ", i, " of ", mesh);

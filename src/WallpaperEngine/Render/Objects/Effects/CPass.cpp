@@ -285,7 +285,6 @@ void CPass::bindTextureUnit (int index, const std::shared_ptr<const TextureProvi
 
     glActiveTexture (GL_TEXTURE0 + index);
     glBindTexture (GL_TEXTURE_2D, texture->getTextureID (frame));
-
 }
 
 void CPass::bindTextureOverrides (uint32_t currentTexture, std::shared_ptr<const TextureProvider>& texture0) const {
@@ -524,7 +523,9 @@ void CPass::render () {
 
     if (debug.passLog) {
 	if (const auto error = glGetError (); error != GL_NO_ERROR) {
-	    sLog.out ("  glGetError=", error, " (object=", this->m_renderable.getId (), " shader=", this->m_pass.shader, ")");
+	    sLog.out (
+		"  glGetError=", error, " (object=", this->m_renderable.getId (), " shader=", this->m_pass.shader, ")"
+	    );
 	}
     }
 }

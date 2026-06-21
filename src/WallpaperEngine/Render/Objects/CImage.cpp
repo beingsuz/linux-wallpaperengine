@@ -647,11 +647,8 @@ void CImage::setup () {
 		continue;
 	    }
 
-	    // Register any script-driven shader constants in this effect's pass overrides so their per-frame
-	    // scripts actually run. The script source is parsed onto the constant's DynamicValue, but unlike
-	    // object-level properties these effect constants are never queued — so e.g. a "rainbow" colour
-	    // cycle (a tint colour driven by a JS update()) stays frozen at its static fallback. Queue them
-	    // here (visible effects only) so tick() advances the value and CPass uploads the live result.
+	    // Queue script-driven effect constants so tick() advances them; unlike object properties these
+	    // are never queued otherwise, so e.g. a rainbow tint would stay frozen at its static fallback.
 	    {
 		int passIndex = 0;
 		for (const auto& passOverride : cur->passOverrides) {
@@ -848,13 +845,9 @@ void CImage::setupPasses () {
 	    drawTo = this->getScene ().getFBO ();
 
 	    if (this->getImage ().model->passthrough && this->getImage ().model->fullscreen) {
-		// A fullscreen passthrough layer is a whole-frame post-process (it sampled the scene from
-		// _rt_FullFrameBuffer and graded it). Its writeback must cover the entire framebuffer. The
-		// scene-space quad routes through m_modelViewProjectionScreen (ortho * camera lookAt), whose
-		// lookAt tilts this flat z=0 quad so its corners fall outside the [-1,1] depth-clip volume —
-		// the GPU clips a slab and the uncovered pixels keep the ungraded scene (the "coloring applies
-		// only halfway" artifact on Starscape). Use the identity-projected full -1..1 NDC quad instead,
-		// exactly like the copy/intermediate passes (and like WE's untransformed passthrough.vert).
+		// A fullscreen passthrough layer must cover the whole framebuffer. The scene-space camera
+		// lookAt tilts the flat z=0 quad so its corners depth-clip and uncovered pixels keep the
+		// ungraded scene; use the identity-projected full NDC quad instead, like the copy passes.
 		spacePosition = this->getPassSpacePosition ();
 		projection = &this->m_modelViewProjectionPass;
 		inverseProjection = &this->m_modelViewProjectionPassInverse;
@@ -952,10 +945,8 @@ void CImage::render () {
 	return;
     }
 
-    // Group/parent visibility propagates to children: if any ancestor layer is hidden (e.g. a style
-    // selector script toggled its container group off) this child is hidden too. Walk up the parent
-    // chain and bail if any ancestor's visibility is false. Objects without a parent (the common case,
-    // e.g. every Starscape layer) skip the loop entirely, so this is inert unless a group is involved.
+    // Parent visibility propagates to children: walk up the parent chain and bail if any ancestor is
+    // hidden (e.g. a style-selector script toggled its container group off).
     for (auto parent = this->getObject ().parent; parent.has_value ();) {
 	const auto* parentObject = this->getScene ().getObject (parent.value ());
 	if (parentObject == nullptr) {
@@ -966,9 +957,7 @@ void CImage::render () {
 	    && !parentData.groupVisible->value->getBool ()) {
 	    return;
 	}
-	// A script that toggles an image-layer container's visibility drives image.visible (what that
-	// layer renders from), not groupVisible, so honor it here too or children of a hidden image
-	// parent would keep rendering.
+	// An image-layer container toggles image.visible, not groupVisible, so honor it here too.
 	if (parentData.is<Image> ()) {
 	    const auto* parentImage = parentData.as<Image> ();
 	    if (parentImage->visible != nullptr && parentImage->visible->value != nullptr
@@ -1007,10 +996,8 @@ void CImage::render () {
 	(*cur)->render ();
     }
 
-    // Restore alpha writes: leaving the mask disabled leaks it into the next frame's scene clear (the
-    // clear silently stops writing alpha) and into any FBO created afterwards (an in-process wallpaper
-    // rebuild "clears" its new framebuffers to uninitialized VRAM). The scene buffer's alpha then sticks
-    // at whatever the allocation contained, and every alpha-blended writeback composites against it.
+    // Restore alpha writes: a leaked disabled mask leaks into the next frame's scene clear and into any
+    // FBO created afterwards, leaving stale alpha that every alpha-blended writeback composites against.
     glColorMask (true, true, true, true);
 
 #if !NDEBUG

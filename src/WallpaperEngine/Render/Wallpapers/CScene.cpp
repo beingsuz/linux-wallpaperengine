@@ -65,9 +65,8 @@ CScene::CScene (
 	    width = maxExtent.x * 2.0f;
 	    height = maxExtent.y * 2.0f;
 	} else {
-	    // Use the first-captured output size, not the live one: an in-process rebuild (live property
-	    // change, control-socket bg swap) must size the scene exactly like the original build or the
-	    // effect-composite chain samples misaligned buffers and effects stop showing.
+	    // Use the first-captured output size, not the live one: an in-process rebuild must size the
+	    // scene like the original build or the effect-composite chain samples misaligned buffers.
 	    const auto fallback = this->getContext ().getStableOutputSize ();
 	    width = fallback.x;
 	    height = fallback.y;
@@ -107,9 +106,8 @@ CScene::CScene (
 	this->addObjectToRenderOrder (*object);
     }
 
-    // Wallpaper Engine's default render order is dependency/declaration order (built above). When the
-    // scene sets "customsortorder", it instead sorts by each object's "sortorder" key. Use a *stable*
-    // sort so objects that share a sortorder keep their dependency/declaration order as the tiebreaker.
+    // "customsortorder" sorts by each object's "sortorder" key instead of declaration order; stable so
+    // objects sharing a sortorder keep declaration order as the tiebreaker.
     if (scene->customSortOrder) {
 	std::ranges::stable_sort (this->m_objectsByRenderOrder, [] (const CObject* a, const CObject* b) {
 	    return a->getObject ().sortorder < b->getObject ().sortorder;
@@ -268,11 +266,8 @@ Render::CObject* CScene::dispatchObjectType (const Object& object) {
 
 	renderObject = new Objects::CParticle (*this, particleData);
     } else {
-	// No image/sound/text/particle/model: this is a transform "group" object (a container the
-	// scene/scripts parent other layers under). Create it as a ScriptableObject so its group
-	// transform + visibility are registered as script-drivable properties — a style-selector
-	// script (e.g. Makima's character toggle) flips a group's `visible`, and CImage propagates
-	// that to the group's children. A plain CObject can't be driven, so every style would show.
+	// A transform "group" container: make it a ScriptableObject so its transform + visibility are
+	// script-drivable (a style-selector flips the group's visible; a plain CObject can't be driven).
 	renderObject = new Scripting::ScriptableObject (*this, object);
     }
 
@@ -374,8 +369,8 @@ void CScene::renderFrame (const glm::ivec4& viewport) {
     // ensure we render over the whole framebuffer
     glViewport (0, 0, this->m_sceneFBO->getRealWidth (), this->m_sceneFBO->getRealHeight ());
 
-    // the clear must write all channels: a leaked alpha-disabled color mask would silently keep the
-    // framebuffer's stale alpha, which every alpha-blended effect writeback then composites against
+    // Force all channels on before the clear: a leaked alpha-disabled mask leaves stale alpha that
+    // every alpha-blended effect writeback then composites against.
     glColorMask (true, true, true, true);
     glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -457,9 +452,8 @@ const CObject* CScene::getObject (int id) const {
 }
 
 Render::CObject* CScene::createLayer (const std::string& modelPath, const std::string& workshopId) {
-    // Resolve the asset path: scripts reference bar models by their bare workshop-relative path
-    // (e.g. "models/full-pixel.json"), but the packaged asset lives under the script's workshop id
-    // ("models/workshop/<id>/full-pixel.json"). Try the bare path first, then the workshop-scoped one.
+    // Resolve the asset path: scripts use the bare path (e.g. "models/full-pixel.json") but the asset
+    // may live under the script's workshop id. Try the bare path first, then the workshop-scoped one.
     std::string path = modelPath;
     const auto resolves = [this] (const std::string& candidate) {
 	try {
@@ -472,16 +466,14 @@ Render::CObject* CScene::createLayer (const std::string& modelPath, const std::s
 
     if (!resolves (path) && !workshopId.empty ()) {
 	if (const auto slash = path.find ('/'); slash != std::string::npos) {
-	    std::string scoped
-		= path.substr (0, slash + 1) + "workshop/" + workshopId + "/" + path.substr (slash + 1);
+	    std::string scoped = path.substr (0, slash + 1) + "workshop/" + workshopId + "/" + path.substr (slash + 1);
 	    if (resolves (scoped)) {
 		path = std::move (scoped);
 	    }
 	}
     }
 
-    // Allocate a fresh id above everything currently known (live objects + parse-time objects), so it
-    // never collides with an existing key in m_objects or a not-yet-instantiated dependency.
+    // Allocate a fresh id above everything known (live + parse-time objects) so it can't collide.
     int newId = 0;
     for (const auto& id : this->m_objects | std::views::keys) {
 	newId = std::max (newId, id);
@@ -543,8 +535,7 @@ void CScene::moveLayerToScriptableIndex (CObject* layer, int index) {
     }
     order.erase (current);
 
-    // Insert just before the index-th scriptable layer; a negative / past-the-end index appends,
-    // leaving the layer on top of the render order.
+    // Insert just before the index-th scriptable layer; a negative/past-the-end index appends (top).
     auto insertPos = order.end ();
     if (index >= 0) {
 	int scriptIndex = 0;

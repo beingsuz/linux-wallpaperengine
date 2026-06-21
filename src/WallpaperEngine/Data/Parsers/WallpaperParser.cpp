@@ -17,12 +17,10 @@ WallpaperUniquePtr WallpaperParser::parse (const JSON& file, Project& project) {
 	case Project::Type_Web:
 	    return parseWeb (file, project);
 	case Project::Type_Image:
-	    // Static image wallpaper. WE draws it as a fullscreen textured quad; the fork has no
-	    // dedicated image renderer yet (the daemon shows the preview instead).
+	    // No dedicated image renderer yet; the daemon shows the preview instead.
 	    sLog.exception ("Image wallpapers are not yet supported by this engine");
 	case Project::Type_Application:
-	    // Application wallpapers re-target a running app's swap chain via Windows DLL injection;
-	    // no portable Linux equivalent exists in this engine.
+	    // App wallpapers rely on Windows DLL injection; no portable Linux equivalent.
 	    sLog.exception ("Application wallpapers are not supported on this platform");
 	default:
 	    sLog.exception ("Unexpected project type value found... This is likely a bug");
@@ -33,12 +31,10 @@ SceneUniquePtr WallpaperParser::parseScene (const JSON& file, Project& project) 
     const auto scene = JSON::parse (project.assetLocator->readString (file));
     const auto camera = scene.require ("camera", "Scenes must have a camera section");
     const auto general = scene.require ("general", "Scenes must have a general section");
-    // Some scenes ship "orthogonalprojection": null (or omit width/height),
-    // expecting the projection to be auto-sized to the screen. Treat any of
-    // those cases as auto instead of throwing "Projection must have a width".
+    // Scenes may ship "orthogonalprojection": null or omit width/height, meaning
+    // auto-size to screen; treat those as auto instead of throwing.
     const auto projectionOpt = general.optional ("orthogonalprojection");
-    const bool projectionAuto =
-	!projectionOpt.has_value () || projectionOpt->optional ("auto", false);
+    const bool projectionAuto = !projectionOpt.has_value () || projectionOpt->optional ("auto", false);
     const auto objects = scene.require ("objects", "Scenes must have an objects section");
     const auto& properties = project.properties;
 
@@ -84,19 +80,12 @@ SceneUniquePtr WallpaperParser::parseScene (const JSON& file, Project& project) 
                     .width  = projectionAuto ? 0 : projectionOpt->optional <int> ("width",  0),
                     .height = projectionAuto ? 0 : projectionOpt->optional <int> ("height", 0),
                     .isAuto = projectionAuto,
-                    // Wallpaper Engine's perspective camera defaults (verified in the binary at scene
-                    // offsets nearz=0x14c, farz=0x150, fov=0x140): nearz 0.1, farz 10000, fov 50°.
-                    // These feed the perspective projection used by 3D models and perspective particle
-                    // systems — a near of 0 makes glm::perspective degenerate and far 1000 clips large
-                    // or distant 3D content (Starscape's model + planets vanish). The 2D orthographic
-                    // compositor does NOT use these directly (Camera::setOrthogonalProjection forces
-                    // near 0 so flat layers at z=0 are never clipped).
+                    // WE perspective-camera defaults (nearz 0.1, farz 10000): near 0 makes
+                    // glm::perspective degenerate and far 1000 clips distant 3D content.
                     .nearz = camera.user ("nearz", properties, 0.1f),
                     .farz = camera.user ("farz", properties, 10000.0f),
-                    // Wallpaper Engine declares fov under `general` (often property-bound, e.g.
-                    // Starscape's general.fov = {user:'fov', value:50}); older scenes put it under
-                    // `camera`. Prefer general so the user `fov` property actually drives the camera,
-                    // falling back to camera for compatibility.
+                    // WE declares fov under `general` (often property-bound); older scenes use
+                    // `camera`. Prefer general so the user `fov` property drives the camera.
                     .fov = general.optional ("fov").has_value ()
 			       ? general.user ("fov", properties, 50.0f)
 			       : camera.user ("fov", properties, 50.0f)

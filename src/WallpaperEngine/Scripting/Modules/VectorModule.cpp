@@ -16,9 +16,8 @@ static std::map<JSModuleDef*, uint32_t> vectorModuleDefs;
 JSValue wevector_angle2 (JSContext*, JSValueConst, int, JSValueConst*, int);
 JSValue wevector_anglevector2 (JSContext*, JSValueConst, int, JSValueConst*, int);
 
-// QuickJS contract: JS_AddModuleExport declares exports (constructor); JS_SetModuleExport assigns their
-// values from inside the init callback (instantiation). The original code had these swapped, leaving
-// WEVector.vectorAngle2 undefined ("not a function") so any importing script (e.g. the 3D camera) threw.
+// QuickJS contract: JS_AddModuleExport declares exports (constructor); JS_SetModuleExport assigns
+// their values from the init callback. These were swapped before, leaving WEVector.* undefined.
 int wevector_init (JSContext* ctx, JSModuleDef* m) {
     const auto it = vectorModuleDefs.find (m);
     const uint32_t instanceId = it != vectorModuleDefs.end () ? it->second : 0;

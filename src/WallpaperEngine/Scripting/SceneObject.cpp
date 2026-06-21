@@ -151,10 +151,8 @@ JSValue get_layer (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst
 
 	JS_ToInt32 (ctx, &index, layer);
 
-	// getLayer(index) is INDEX-based in Wallpaper Engine (0 .. getLayerCount()-1). Index into the
-	// same scriptable-layer subset getLayerCount() reports, skipping non-scriptable placeholders
-	// (unknown object types) so every getLayer(0..count-1) returns a valid layer with a name —
-	// scripts iterate the range and call layer.name.includes(...) on each.
+	// getLayer(index) is INDEX-based (0 .. getLayerCount()-1) over the same scriptable-layer subset
+	// getLayerCount() reports; skip non-scriptable placeholders so every index returns a valid layer.
 	int current = 0;
 	for (auto* object : container->getScene ().getObjectsByRenderOrder ()) {
 	    if (object == nullptr || !object->is<ScriptableObject> ()) {
@@ -192,14 +190,11 @@ JSValue get_layer (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst
     return JS_EXCEPTION;
 }
 
-// thisScene.getLayerCount() -> number of layers/objects in the scene. Used by control
-// scripts that iterate layers (e.g. style/mode selectors that show/hide variant layers).
-// Without it those scripts throw "not a function" and never hide the unselected variants.
+// thisScene.getLayerCount() -> number of scriptable layers. Scripts iterate 0..count-1 to show/hide.
 JSValue get_layer_count (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
     auto* container = get_opaque (this_val);
 
-    // Count only scriptable layers — must match getLayer(index), which skips non-scriptable
-    // placeholders, so scripts iterating 0..getLayerCount()-1 never hit an undefined layer.
+    // Count only scriptable layers, matching getLayer(index) which skips non-scriptable placeholders.
     int32_t count = 0;
     for (auto* object : container->getScene ().getObjectsByRenderOrder ()) {
 	if (object != nullptr && object->is<ScriptableObject> ()) {
@@ -254,8 +249,8 @@ JSValue scene_get_camera_transforms (JSContext* ctx, JSValueConst this_val, int 
     auto* container = get_opaque (this_val);
     const auto& camera = container->getScene ().getCamera ();
     JSValue obj = JS_NewObject (ctx);
-    // Return the scene's BASE camera (not any runtime override). Camera-controller scripts recompute
-    // the camera from this every frame, so feeding back the overridden value drifts it away.
+    // Return the BASE camera, not any runtime override: scripts recompute from this each frame, so an
+    // overridden value would drift.
     JS_SetPropertyStr (ctx, obj, "eye", make_script_vec3 (ctx, camera.getBaseEye ()));
     JS_SetPropertyStr (ctx, obj, "center", make_script_vec3 (ctx, camera.getBaseCenter ()));
     JS_SetPropertyStr (ctx, obj, "up", make_script_vec3 (ctx, camera.getBaseUp ()));
@@ -385,7 +380,8 @@ JSValue scene_enumerate_layers (JSContext* ctx, JSValueConst this_val, int argc,
 	    continue;
 	}
 	JS_SetPropertyUint32 (
-	    ctx, arr, index++, container->getEngine ().getAdapters ().object->instantiate (*object->as<ScriptableObject> ())
+	    ctx, arr, index++,
+	    container->getEngine ().getAdapters ().object->instantiate (*object->as<ScriptableObject> ())
 	);
     }
 

@@ -12,8 +12,7 @@ using namespace WallpaperEngine::Scripting::Modules;
 
 static uint32_t ColorModuleInstanceId = 0;
 std::map<uint32_t, ColorModule&> colorModules;
-// Maps each module definition to its instance id so the (static) init callback can stamp the right
-// magic on the exported functions. Populated in the constructor, consumed in wecolor_init.
+// Module def -> instance id, so the static init callback can stamp the right magic on the exports.
 static std::map<JSModuleDef*, uint32_t> colorModuleDefs;
 
 JSValue wecolor_rgb2hsv (JSContext*, JSValueConst, int, JSValueConst*, int);
@@ -21,10 +20,8 @@ JSValue wecolor_hsv2rgb (JSContext*, JSValueConst, int, JSValueConst*, int);
 JSValue wecolor_normalizecolor (JSContext*, JSValueConst, int, JSValueConst*, int);
 JSValue wecolor_expandcolor (JSContext*, JSValueConst, int, JSValueConst*, int);
 
-// QuickJS contract: JS_AddModuleExport declares exports (done in the constructor, before the module is
-// linked); JS_SetModuleExport must assign their values from inside the init callback (run at module
-// instantiation). The original code had these swapped — Set ran in the constructor before the exports
-// existed, so every WEColor.* stayed undefined ("not a function") and any importing script threw.
+// QuickJS contract: JS_AddModuleExport declares exports (constructor); JS_SetModuleExport assigns
+// their values from the init callback. These were swapped before, leaving every WEColor.* undefined.
 int wecolor_init (JSContext* ctx, JSModuleDef* m) {
     const auto it = colorModuleDefs.find (m);
     const uint32_t instanceId = it != colorModuleDefs.end () ? it->second : 0;
@@ -133,9 +130,8 @@ JSValue wecolor_hsv2rgb (JSContext* ctx, JSValueConst this_val, int argc, JSValu
     JS_ToFloat64 (ctx, &yVal, y);
     JS_ToFloat64 (ctx, &zVal, z);
 
-    // conversion code from https://gist.github.com/yoggy/8999625, adapted to Wallpaper Engine's
-    // convention: hue is 0..1 (not degrees) and wraps fractionally — WE's own color-cycle script
-    // feeds hsv2rgb an ever-growing `engine.runtime * speed` and relies on the wrap for the rainbow.
+    // conversion code from https://gist.github.com/yoggy/8999625, adapted to WE's convention:
+    // hue is 0..1 (not degrees) and wraps fractionally (scripts feed it an ever-growing value).
     float r, g, b; // 0.0-1.0
 
     const double hue = (xVal - std::floor (xVal)) * 6.0;

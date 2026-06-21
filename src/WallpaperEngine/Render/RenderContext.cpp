@@ -60,8 +60,7 @@ const Drivers::Output::Output& RenderContext::getOutput () const { return this->
 
 glm::ivec2 RenderContext::getStableOutputSize () const {
     if (!this->m_stableOutputSize.has_value ()) {
-	this->m_stableOutputSize
-	    = glm::ivec2 (this->getOutput ().getFullWidth (), this->getOutput ().getFullHeight ());
+	this->m_stableOutputSize = glm::ivec2 (this->getOutput ().getFullWidth (), this->getOutput ().getFullHeight ());
     }
 
     return this->m_stableOutputSize.value ();

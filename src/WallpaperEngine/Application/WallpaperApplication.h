@@ -82,10 +82,7 @@ public:
      */
     [[nodiscard]] GLuint getDestinationFramebuffer () const;
 
-    /**
-     * Live control operations (used by the control socket) — apply changes to a
-     * running process without restarting it.
-     */
+    /** Live control operations (control socket): apply changes without restarting the process. */
     bool setBackground (const std::string& screen, const std::string& path);
     bool setProperty (const std::string& screen, const std::string& key, const std::string& value);
     bool setScreenScaling (const std::string& screen, const std::string& mode);
@@ -94,9 +91,8 @@ public:
     void setVolume (int volume);
     void setMute (bool muted);
     bool setOption (const std::string& key, const std::string& value);
-    // Capture a rendered frame of the current wallpaper(s) to an image file. Safe to call live from
-    // the control socket (runs on the render thread, reads the last rendered FBO). The file is saved
-    // asynchronously, so callers should poll for it. Returns false if nothing is renderable yet.
+    // Capture a rendered frame to an image file (live-safe; reads the last FBO on the render thread).
+    // Saved asynchronously, so callers should poll; returns false if nothing is renderable yet.
     bool captureScreenshot (const std::filesystem::path& path) const;
     [[nodiscard]] std::string controlStatus () const;
 

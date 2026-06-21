@@ -514,7 +514,10 @@ void ApplicationContext::loadSettingsFromArgv () {
 	.store_into (this->settings.controlSocket);
 
     program.add_argument ("--audio-device")
-	.help ("PulseAudio/PipeWire source to capture for audio-reactive wallpapers (default: system default output monitor)")
+	.help (
+	    "PulseAudio/PipeWire source to capture for audio-reactive wallpapers (default: system default output "
+	    "monitor)"
+	)
 	.default_value (std::string (""))
 	.store_into (this->settings.audio.device);
 
