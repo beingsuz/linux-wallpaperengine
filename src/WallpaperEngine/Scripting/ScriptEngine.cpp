@@ -601,6 +601,29 @@ std::string ScriptEngine::getRunningModuleWorkshopId () const {
     return result;
 }
 
+void ScriptEngine::dispatchUserProperty (const std::string& key, DynamicValue& value) {
+    if (this->m_context == nullptr) {
+	return;
+    }
+
+    JSValue changed = JS_NewObject (this->m_context);
+    JS_SetPropertyStr (this->m_context, changed, key.c_str (), this->dynamicToJs (value));
+
+    for (auto& module : this->m_scriptModules | std::views::values) {
+	// Bind thisLayer like tick() does, so a layer script's applyUserProperties sees its own layer.
+	if (module.object != nullptr) {
+	    JS_SetPropertyStr (
+		this->m_context, this->m_globalThis, "thisLayer", this->m_adapters.object->instantiate (*module.object)
+	    );
+	}
+	JSValue args[] = { changed };
+	JSValue result = this->call (module.module, 1, args, "applyUserProperties");
+	JS_FreeValue (this->m_context, result);
+    }
+
+    JS_FreeValue (this->m_context, changed);
+}
+
 void ScriptEngine::queueScript (const std::string& key, DynamicValue& currentValue, ScriptableObject& object) {
     const auto source = currentValue.getScriptSource ();
 

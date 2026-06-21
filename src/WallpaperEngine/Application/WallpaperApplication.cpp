@@ -11,6 +11,7 @@
 #include "WallpaperEngine/Logging/Log.h"
 #include "WallpaperEngine/Render/Drivers/VideoFactories.h"
 #include "WallpaperEngine/Render/RenderContext.h"
+#include "WallpaperEngine/Render/Wallpapers/CScene.h"
 
 #include "WallpaperEngine/Data/Dumpers/StringPrinter.h"
 #include "WallpaperEngine/Data/Parsers/ProjectParser.h"
@@ -1124,6 +1125,15 @@ bool WallpaperApplication::setProperty (const std::string& screen, const std::st
 	const auto it = this->m_context.settings.general.screenBackgrounds.find (screen);
 	if (it != this->m_context.settings.general.screenBackgrounds.end ()) {
 	    return this->setBackground (screen, it->second.string ());
+	}
+    }
+
+    // Live (non-structural) change: notify the scene's scripts so a script-driven wallpaper can react
+    // (applyUserProperties). Structural changes rebuilt above and re-run init() with the new value.
+    const auto& wallpapers = this->m_renderContext->getWallpapers ();
+    if (const auto wpIt = wallpapers.find (screen); wpIt != wallpapers.end ()) {
+	if (auto* scene = dynamic_cast<Render::Wallpapers::CScene*> (wpIt->second.get ())) {
+	    scene->getScriptEngine ().dispatchUserProperty (key, *propertyIt->second);
 	}
     }
 
