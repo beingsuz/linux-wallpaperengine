@@ -419,7 +419,9 @@ void WaylandOpenGLDriver::dispatchEventQueue () {
     // TODO: WRITE A NON-BLOCKING VERSION OF THIS ONCE PARTICLE SIMULATION STARTS WORKING
     // TODO: OTHERWISE wl_display_dispatch WILL BLOCK IF NO SURFACES ARE BEING DRAWN
     static float startTime, endTime;
-    const float minimumTime = 1.0f / std::max (1, this->m_context.settings.render.maximumFPS);
+    // maximumFPS <= 0 means uncapped: render as fast as the compositor allows (vsync-bound), no sleep.
+    const int fpsCap = this->m_context.settings.render.maximumFPS;
+    const float minimumTime = fpsCap > 0 ? 1.0f / fpsCap : 0.0f;
     // get the start time of the frame
     startTime = this->getRenderTime ();
 
@@ -431,8 +433,8 @@ void WaylandOpenGLDriver::dispatchEventQueue () {
 
     endTime = this->getRenderTime ();
 
-    // ensure the frame time is correct to not overrun FPS
-    if ((endTime - startTime) < minimumTime) {
+    // ensure the frame time is correct to not overrun FPS (skipped entirely when uncapped)
+    if (minimumTime > 0.0f && (endTime - startTime) < minimumTime) {
 	usleep ((minimumTime - (endTime - startTime)) * CLOCKS_PER_SEC);
     }
 }

@@ -119,7 +119,9 @@ uint32_t GLFWOpenGLDriver::getFrameCounter () const { return this->m_frameCounte
 
 void GLFWOpenGLDriver::dispatchEventQueue () {
     static float startTime, endTime;
-    const float minimumTime = 1.0f / std::max (1, this->m_context.settings.render.maximumFPS);
+    // maximumFPS <= 0 means uncapped: render as fast as possible, no frame-cap sleep.
+    const int fpsCap = this->m_context.settings.render.maximumFPS;
+    const float minimumTime = fpsCap > 0 ? 1.0f / fpsCap : 0.0f;
     // get the start time of the frame
     startTime = this->getRenderTime ();
     // clear the screen
@@ -166,7 +168,7 @@ void GLFWOpenGLDriver::dispatchEventQueue () {
     endTime = this->getRenderTime ();
 
     // ensure the frame time is correct to not overrun FPS
-    if ((endTime - startTime) < minimumTime) {
+    if (minimumTime > 0.0f && (endTime - startTime) < minimumTime) {
 	usleep ((minimumTime - (endTime - startTime)) * CLOCKS_PER_SEC);
     }
 }
