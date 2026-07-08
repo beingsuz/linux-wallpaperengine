@@ -52,9 +52,12 @@
 	  "#define ddx dFdx\n"                                                                                         \
 	  "#define ddy(x) dFdy(-(x))\n"                                                                                \
 	  "#define GLSL 1\n\n";
+// gl_Position define: some wallpaper shaders read gl_Position in the fragment stage (a vertex-only
+// output; the author meant the pixel position). WE tolerates it; map it to gl_FragCoord to compile.
 #define FRAGMENT_SHADER_DEFINES                                                                                        \
     "out vec4 out_FragColor;\n"                                                                                        \
-    "#define varying in\n"
+    "#define varying in\n"                                                                                            \
+    "#define gl_Position gl_FragCoord\n"
 #define VERTEX_SHADER_DEFINES                                                                                          \
     "#define attribute in\n"                                                                                           \
     "#define varying out\n"
@@ -414,6 +417,21 @@ std::string ShaderUnit::applyLinkedVaryingCompatibility (std::string source) con
 	}
     }
 
+    return source;
+}
+
+std::string ShaderUnit::applyFunctionQualifierCompatibility (std::string source) const {
+    // Some wallpaper shaders declare functions with a `const` return qualifier (e.g.
+    // `const float fract(float x)`), which WE's compiler tolerates but GLSL rejects with
+    // "no qualifiers allowed for function return". Strip `const` when it qualifies a function
+    // definition (a type + name immediately followed by `(`); const variables (`const float PI = ...`,
+    // which have `=` not `(` after the name) are left untouched.
+    static const std::regex constReturn (R"(\bconst\s+(\w+\s+\w+\s*\())");
+    const std::string original = source;
+    source = std::regex_replace (source, constReturn, "$1");
+    if (source != original) {
+	sLog.out ("Stripped const function-return qualifier(s) in ", this->m_file);
+    }
     return source;
 }
 
@@ -795,8 +813,9 @@ const std::string& ShaderUnit::compile () {
     }
 
     // this should be the rest of the shader
-    this->m_final
-	+= this->applyFragmentTexCoordCompatibility (this->applyLinkedVaryingCompatibility (this->m_preprocessed));
+    this->m_final += this->applyFunctionQualifierCompatibility (
+	this->applyFragmentTexCoordCompatibility (this->applyLinkedVaryingCompatibility (this->m_preprocessed))
+    );
 
     // the pass itself handles shader compilation, the unit doesn't have enough information for this step
     return this->m_final;

@@ -108,6 +108,7 @@ private:
      * Adjusts fragment shaders that use wide texture coordinates as vec2 values in Wallpaper Engine effects.
      */
     [[nodiscard]] std::string applyFragmentTexCoordCompatibility (std::string source) const;
+    [[nodiscard]] std::string applyFunctionQualifierCompatibility (std::string source) const;
 
     /**
      * Parses a COMBO value to add the proper define to the code

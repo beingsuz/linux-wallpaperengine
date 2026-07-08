@@ -1040,6 +1040,14 @@ void CPass::setupUniforms () {
     this->addUniform ("g_EffectTextureProjectionMatrixInverse", glm::mat4 (1.0));
     this->addUniform ("g_TexelSize", glm::vec2 (1.0 / scene.getWidth (), 1.0 / scene.getHeight ()));
     this->addUniform ("g_TexelSizeHalf", glm::vec2 (0.5 / scene.getWidth (), 0.5 / scene.getHeight ()));
+    // Screen resolution (px), xy = size, z = aspect. Some effect shaders build UVs from it and divide
+    // by g_Screen.y; without it the uniform is 0 and the shader NaNs to black.
+    this->addUniform (
+	"g_Screen", glm::vec3 (
+			scene.getWidth (), scene.getHeight (),
+			static_cast<float> (scene.getWidth ()) / static_cast<float> (scene.getHeight ())
+		    )
+    );
     this->addUniform ("g_AudioSpectrum16Left", recorder.audio16, 16);
     this->addUniform ("g_AudioSpectrum16Right", recorder.audio16, 16);
     this->addUniform ("g_AudioSpectrum32Left", recorder.audio32, 32);
