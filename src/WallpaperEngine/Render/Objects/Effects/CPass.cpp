@@ -1,6 +1,12 @@
 #include "CPass.h"
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <sstream>
 #include <utility>
+#include <vector>
 
 #include "WallpaperEngine/Render/Helpers/ContextAware.h"
 
@@ -42,7 +48,100 @@ std::string textureSizeLabel (const std::shared_ptr<const TextureProvider>& text
 
     return std::to_string (texture->getRealWidth ()) + "x" + std::to_string (texture->getRealHeight ());
 }
+
+// On-disk cache of linked GL program binaries so repeat launches skip GLSL translation output
+// compilation and linking (tens of ms per shader, the bulk of a scene's build time). Keyed by a
+// hash of the exact translated sources plus the driver version string; a stale or mismatched
+// binary simply fails glProgramBinary / link-status and the shader is recompiled and re-saved.
+std::filesystem::path shaderCacheDir () {
+    const char* xdg = std::getenv ("XDG_CACHE_HOME");
+    std::filesystem::path base;
+    if (xdg != nullptr && *xdg != '\0') {
+	base = xdg;
+    } else {
+	const char* home = std::getenv ("HOME");
+	base = std::filesystem::path (home != nullptr ? home : ".") / ".cache";
+    }
+    return base / "linux-wallpaperengine" / "shaders";
 }
+
+uint64_t fnv1a (const std::string& s, uint64_t hash) {
+    for (const unsigned char c : s) {
+	hash ^= c;
+	hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+std::string programCacheKey (const std::string& vertex, const std::string& fragment) {
+    const auto* version = reinterpret_cast<const char*> (glGetString (GL_VERSION));
+    uint64_t hash = fnv1a (version != nullptr ? version : "", 1469598103934665603ULL);
+    hash = fnv1a (vertex, hash);
+    hash = fnv1a (fragment, hash);
+    char buffer[17];
+    std::snprintf (buffer, sizeof (buffer), "%016llx", static_cast<unsigned long long> (hash));
+    return buffer;
+}
+
+bool loadProgramBinary (const GLuint program, const std::string& key) {
+    std::ifstream in (shaderCacheDir () / (key + ".prog"), std::ios::binary);
+    if (!in) {
+	return false;
+    }
+    GLenum format = 0;
+    in.read (reinterpret_cast<char*> (&format), sizeof (format));
+    if (!in) {
+	return false;
+    }
+    const std::vector<char> data ((std::istreambuf_iterator<char> (in)), std::istreambuf_iterator<char> ());
+    if (data.empty ()) {
+	return false;
+    }
+    glProgramBinary (program, format, data.data (), static_cast<GLsizei> (data.size ()));
+    GLint linked = GL_FALSE;
+    glGetProgramiv (program, GL_LINK_STATUS, &linked);
+    return linked == GL_TRUE;
+}
+
+void saveProgramBinary (const GLuint program, const std::string& key) {
+    GLint length = 0;
+    glGetProgramiv (program, GL_PROGRAM_BINARY_LENGTH, &length);
+    if (length <= 0) {
+	return;
+    }
+    std::vector<char> data (length);
+    GLenum format = 0;
+    GLsizei written = 0;
+    glGetProgramBinary (program, length, &written, &format, data.data ());
+    if (written <= 0) {
+	return;
+    }
+    std::error_code ec;
+    const auto dir = shaderCacheDir ();
+    std::filesystem::create_directories (dir, ec);
+    if (ec) {
+	return;
+    }
+    // write to a temp file then rename so a crash mid-write can't leave a corrupt cache entry
+    const auto tmp = dir / (key + ".prog.tmp");
+    {
+	std::ofstream out (tmp, std::ios::binary | std::ios::trunc);
+	if (!out) {
+	    return;
+	}
+	out.write (reinterpret_cast<const char*> (&format), sizeof (format));
+	out.write (data.data (), written);
+	if (!out) {
+	    std::filesystem::remove (tmp, ec);
+	    return;
+	}
+    }
+    std::filesystem::rename (tmp, dir / (key + ".prog"), ec);
+    if (ec) {
+	std::filesystem::remove (tmp, ec);
+    }
+}
+} // namespace
 
 CPass::CPass (
     CRenderable& renderable, std::shared_ptr<const FBOProvider> fboProvider, const MaterialPass& pass,
@@ -652,53 +751,64 @@ void CPass::setupShaders () {
     const auto [vertex, fragment]
 	= Shaders::GLSLContext::get ().toGlsl (this->m_shader->vertex (), this->m_shader->fragment ());
 
-    // compile the shaders
-    const GLuint vertexShaderID = compileShader (vertex.c_str (), GL_VERTEX_SHADER);
-    const GLuint fragmentShaderID = compileShader (fragment.c_str (), GL_FRAGMENT_SHADER);
-    // create the final program
+    // create the final program; try the on-disk binary cache first, compile+link on a miss
     this->m_programID = glCreateProgram ();
-    // link the shaders together
-    glAttachShader (this->m_programID, vertexShaderID);
-    glAttachShader (this->m_programID, fragmentShaderID);
-    glLinkProgram (this->m_programID);
-    // check that the shader was properly linked
-    GLint result = GL_FALSE;
-    int infoLogLength = 0;
+    const std::string cacheKey = programCacheKey (vertex, fragment);
 
-    glGetProgramiv (this->m_programID, GL_LINK_STATUS, &result);
-    glGetProgramiv (this->m_programID, GL_INFO_LOG_LENGTH, &infoLogLength);
+    if (!loadProgramBinary (this->m_programID, cacheKey)) {
+	// compile the shaders
+	const GLuint vertexShaderID = compileShader (vertex.c_str (), GL_VERTEX_SHADER);
+	const GLuint fragmentShaderID = compileShader (fragment.c_str (), GL_FRAGMENT_SHADER);
+	// ask the driver to keep a retrievable binary around so it can be cached to disk
+	glProgramParameteri (this->m_programID, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
+	// link the shaders together
+	glAttachShader (this->m_programID, vertexShaderID);
+	glAttachShader (this->m_programID, fragmentShaderID);
+	glLinkProgram (this->m_programID);
+	// check that the shader was properly linked
+	GLint result = GL_FALSE;
+	int infoLogLength = 0;
 
-    if (infoLogLength > 0) {
-	const auto logBuffer = new char[infoLogLength + 1];
-	// ensure logBuffer ends with a \0
-	memset (logBuffer, 0, infoLogLength + 1);
-	// get information about the error
-	glGetProgramInfoLog (this->m_programID, infoLogLength, nullptr, logBuffer);
-	// throw an exception about the issue
-	const std::string message = logBuffer;
-	// free the buffer
-	delete[] logBuffer;
-	if (result == GL_FALSE) {
-	    // shader compilation failed completely, throw an exception
-	    sLog.exception (message);
-	} else {
-	    // some warning was emitted, log the error and keep chuging along
-	    sLog.error (message);
+	glGetProgramiv (this->m_programID, GL_LINK_STATUS, &result);
+	glGetProgramiv (this->m_programID, GL_INFO_LOG_LENGTH, &infoLogLength);
+
+	if (infoLogLength > 0) {
+	    const auto logBuffer = new char[infoLogLength + 1];
+	    // ensure logBuffer ends with a \0
+	    memset (logBuffer, 0, infoLogLength + 1);
+	    // get information about the error
+	    glGetProgramInfoLog (this->m_programID, infoLogLength, nullptr, logBuffer);
+	    // throw an exception about the issue
+	    const std::string message = logBuffer;
+	    // free the buffer
+	    delete[] logBuffer;
+	    if (result == GL_FALSE) {
+		// shader compilation failed completely, throw an exception
+		sLog.exception (message);
+	    } else {
+		// some warning was emitted, log the error and keep chuging along
+		sLog.error (message);
+	    }
 	}
+
+#if !NDEBUG
+	glObjectLabel (GL_SHADER, vertexShaderID, -1, (shaderName + ".vert").c_str ());
+	glObjectLabel (GL_SHADER, fragmentShaderID, -1, (shaderName + ".frag").c_str ());
+#endif /* DEBUG */
+
+	// after being liked shaders can be dettached and deleted
+	glDetachShader (this->m_programID, vertexShaderID);
+	glDetachShader (this->m_programID, fragmentShaderID);
+
+	glDeleteShader (vertexShaderID);
+	glDeleteShader (fragmentShaderID);
+
+	saveProgramBinary (this->m_programID, cacheKey);
     }
 
 #if !NDEBUG
     glObjectLabel (GL_PROGRAM, this->m_programID, -1, shaderName.c_str ());
-    glObjectLabel (GL_SHADER, vertexShaderID, -1, (shaderName + ".vert").c_str ());
-    glObjectLabel (GL_SHADER, fragmentShaderID, -1, (shaderName + ".frag").c_str ());
 #endif /* DEBUG */
-
-    // after being liked shaders can be dettached and deleted
-    glDetachShader (this->m_programID, vertexShaderID);
-    glDetachShader (this->m_programID, fragmentShaderID);
-
-    glDeleteShader (vertexShaderID);
-    glDeleteShader (fragmentShaderID);
 
     // first setup the default values, these will be overwritten by future values
     this->setupShaderVariables ();
@@ -726,7 +836,7 @@ void CPass::setupTextureUniforms () {
 	try {
 	    auto texture = textureName.find ("_rt_") == 0 || textureName.find ("_alias_") == 0
 		? this->resolveFBO (textureName)
-		: this->getContext ().resolveTexture (textureName);
+		: this->getContext ().resolveTexture (textureName, this->m_renderable.getAssetLocator ());
 
 	    // create chain entry
 	    this->m_textures[index] = std::make_shared<TextureChainEntry> (TextureChainEntry {
@@ -742,7 +852,7 @@ void CPass::setupTextureUniforms () {
 	try {
 	    auto texture = textureName.find ("_rt_") == 0 || textureName.find ("_alias_") == 0
 		? this->resolveFBO (textureName)
-		: this->getContext ().resolveTexture (textureName);
+		: this->getContext ().resolveTexture (textureName, this->m_renderable.getAssetLocator ());
 
 	    const auto it = this->m_textures.find (index);
 	    const auto chain = std::make_shared<TextureChainEntry> (TextureChainEntry {
@@ -760,7 +870,7 @@ void CPass::setupTextureUniforms () {
 	try {
 	    auto texture = textureName.find ("_rt_") == 0 || textureName.find ("_alias_") == 0
 		? this->resolveFBO (textureName)
-		: this->getContext ().resolveTexture (textureName);
+		: this->getContext ().resolveTexture (textureName, this->m_renderable.getAssetLocator ());
 
 	    const auto it = this->m_textures.find (index);
 	    const auto chain = std::make_shared<TextureChainEntry> (TextureChainEntry {
@@ -778,7 +888,7 @@ void CPass::setupTextureUniforms () {
 	try {
 	    auto texture = textureName.find ("_rt_") == 0 || textureName.find ("_alias_") == 0
 		? this->resolveFBO (textureName)
-		: this->getContext ().resolveTexture (textureName);
+		: this->getContext ().resolveTexture (textureName, this->m_renderable.getAssetLocator ());
 
 	    const auto it = this->m_textures.find (index);
 	    const auto chain = std::make_shared<TextureChainEntry> (TextureChainEntry {
@@ -797,7 +907,7 @@ void CPass::setupTextureUniforms () {
 	try {
 	    auto texture = textureName.find ("_rt_") == 0 || textureName.find ("_alias_") == 0
 		? this->resolveFBO (textureName)
-		: this->getContext ().resolveTexture (textureName);
+		: this->getContext ().resolveTexture (textureName, this->m_renderable.getAssetLocator ());
 
 	    const auto it = this->m_textures.find (index);
 	    const auto chain = std::make_shared<TextureChainEntry> (TextureChainEntry {
@@ -815,7 +925,7 @@ void CPass::setupTextureUniforms () {
 	try {
 	    auto texture = textureName.find ("_rt_") == 0 || textureName.find ("_alias_") == 0
 		? this->resolveFBO (textureName)
-		: this->getContext ().resolveTexture (textureName);
+		: this->getContext ().resolveTexture (textureName, this->m_renderable.getAssetLocator ());
 
 	    const auto it = this->m_textures.find (index);
 	    const auto chain = std::make_shared<TextureChainEntry> (TextureChainEntry {

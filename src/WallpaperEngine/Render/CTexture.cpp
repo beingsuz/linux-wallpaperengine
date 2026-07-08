@@ -1,6 +1,10 @@
 #include "CTexture.h"
 #include "WallpaperEngine/Logging/Log.h"
 
+#include <future>
+#include <map>
+#include <ranges>
+
 #include <lz4.h>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -47,6 +51,31 @@ CTexture::CTexture (RenderContext& context, TextureUniquePtr header) :
     // ask opengl for the correct amount of textures and framebuffers
     glGenTextures (this->m_header->imageCount, this->m_textureID);
 
+    // Image-file textures (png/jpg inside the .tex) decode on background threads while the GL
+    // thread uploads: stbi decode is the bulk of a scene's texture build time, and every mipmap
+    // decodes independently. Raw/DXT payloads skip this and upload directly.
+    struct DecodedMipmap {
+	stbi_uc* handle;
+	int width;
+	int height;
+    };
+    std::map<const void*, std::future<DecodedMipmap>> decoders;
+    if (this->m_header->freeImageFormat != FIF_UNKNOWN) {
+	for (const auto& mipmaps : this->m_header->images | std::views::values) {
+	    for (const auto& mipmap : mipmaps) {
+		decoders.emplace (mipmap.get (), std::async (std::launch::async, [&mipmap] () {
+		    DecodedMipmap decoded {};
+		    int fileChannels;
+		    decoded.handle = stbi_load_from_memory (
+			reinterpret_cast<unsigned char*> (mipmap->uncompressedData.get ()),
+			mipmap->uncompressedSize, &decoded.width, &decoded.height, &fileChannels, 4
+		    );
+		    return decoded;
+		}));
+	    }
+	}
+    }
+
     for (const auto& [index, mipmaps] : this->m_header->images) {
 	this->setupOpenGLParameters (index);
 
@@ -61,12 +90,10 @@ CTexture::CTexture (RenderContext& context, TextureUniquePtr header) :
 	    GLenum textureFormat = GL_RGBA;
 
 	    if (this->m_header->freeImageFormat != FIF_UNKNOWN) {
-		int fileChannels;
-
-		dataptr = handle = stbi_load_from_memory (
-		    reinterpret_cast<unsigned char*> (mipmap->uncompressedData.get ()), mipmap->uncompressedSize,
-		    &width, &height, &fileChannels, 4
-		);
+		const auto decoded = decoders.at (mipmap.get ()).get ();
+		dataptr = handle = decoded.handle;
+		width = decoded.width;
+		height = decoded.height;
 	    } else {
 		if (this->m_header->format == TextureFormat_R8) {
 		    // red textures are 1-byte-per-pixel, so it's alignment has to be set manually

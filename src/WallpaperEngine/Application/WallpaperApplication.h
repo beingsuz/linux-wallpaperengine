@@ -23,13 +23,6 @@
 
 #include <set>
 
-// Forward-declared to break the RenderContext.h <-> WallpaperApplication.h include cycle: the
-// resident cache holds a shared_ptr<CWallpaper> (incomplete type is fine for a smart-pointer member;
-// the full definition is available in the .cpp).
-namespace WallpaperEngine::Render {
-class CWallpaper;
-}
-
 namespace WallpaperEngine::Application {
 
 using namespace WallpaperEngine::Assets;
@@ -71,13 +64,7 @@ public:
     /**
      * @return Maps screens to loaded backgrounds
      */
-    [[nodiscard]] const std::map<std::string, std::shared_ptr<Project>>& getBackgrounds () const;
-    /**
-     * Loads and fully builds a wallpaper into the resident cache without displaying it, so a later
-     * setBackground to the same path is an instant bind instead of a full rebuild. No-op if already
-     * resident or if the type is not safe to keep resident (only scenes are cached).
-     */
-    void preload (const std::string& path);
+    [[nodiscard]] const std::map<std::string, ProjectUniquePtr>& getBackgrounds () const;
     /**
      * @return The current application context
      */
@@ -102,6 +89,8 @@ public:
 
     /** Live control operations (control socket): apply changes without restarting the process. */
     bool setBackground (const std::string& screen, const std::string& path);
+    /** Record a property override for the NEXT (re)build without touching the current wallpaper. */
+    void stageProperty (const std::string& key, const std::string& value);
     bool setProperty (const std::string& screen, const std::string& key, const std::string& value);
     bool setScreenScaling (const std::string& screen, const std::string& mode);
     bool setScreenClamp (const std::string& screen, const std::string& mode);
@@ -200,26 +189,9 @@ private:
 
     /** The application context that contains the current app settings */
     ApplicationContext& m_context;
-    /** Maps screens to backgrounds (shared so the resident cache can keep the same project alive) */
-    std::map<std::string, std::shared_ptr<Project>> m_backgrounds {};
+    /** Maps screens to backgrounds */
+    std::map<std::string, ProjectUniquePtr> m_backgrounds {};
     std::map<std::string, ActivePlaylist> m_activePlaylists {};
-
-    /** A fully-built wallpaper kept alive so switching back to it is an instant bind. */
-    struct ResidentBackground {
-	std::shared_ptr<Project> project;
-	std::shared_ptr<WallpaperEngine::Render::CWallpaper> wallpaper;
-    };
-    /** Resident cache keyed by resolved wallpaper path (only scene wallpapers are cached). */
-    std::map<std::string, ResidentBackground> m_resident {};
-    /** LRU order of resident paths, front = least recently used, for eviction. */
-    std::vector<std::string> m_residentOrder {};
-    /** Max scenes kept resident at once (VRAM bound); least-recently-used are evicted. */
-    static constexpr std::size_t RESIDENT_MAX = 12;
-    /** Build (or fetch cached) a resident wallpaper for path. Scene types are stored in the cache;
-     *  other types are built fresh each call and returned without caching. */
-    ResidentBackground ensureResident (const std::string& screen, const std::string& path);
-    /** Record a resident path as most-recently-used and evict past RESIDENT_MAX. */
-    void touchResident (const std::string& path);
 
     std::unique_ptr<WallpaperEngine::Audio::Drivers::Detectors::AudioPlayingDetector> m_audioDetector = nullptr;
     std::unique_ptr<WallpaperEngine::Audio::AudioContext> m_audioContext = nullptr;

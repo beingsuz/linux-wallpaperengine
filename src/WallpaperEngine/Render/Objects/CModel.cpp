@@ -86,7 +86,7 @@ void CModel::setup () {
     // Model materials declare textures:[null], which would deref null in CRenderable::setup();
     // resolve a neutral white base instead (generic3's albedo default is util/white anyway).
     try {
-	this->m_texture = this->getContext ().resolveTexture ("util/white");
+	this->m_texture = this->getContext ().resolveTexture ("util/white", this->getAssetLocator ());
     } catch (const std::exception& e) {
 	sLog.error ("CModel: cannot resolve util/white base texture: ", e.what ());
     }

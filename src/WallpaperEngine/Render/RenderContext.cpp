@@ -66,9 +66,12 @@ glm::ivec2 RenderContext::getStableOutputSize () const {
     return this->m_stableOutputSize.value ();
 }
 
-std::shared_ptr<const TextureProvider> RenderContext::resolveTexture (const std::string& name) const {
-    return this->m_textureCache->resolve (name);
+std::shared_ptr<const TextureProvider>
+RenderContext::resolveTexture (const std::string& name, const Assets::AssetLocator& locator) const {
+    return this->m_textureCache->resolve (name, locator);
 }
+
+void RenderContext::resetTextureCache () const { this->m_textureCache->clear (); }
 
 const std::map<std::string, std::shared_ptr<CWallpaper>>& RenderContext::getWallpapers () const {
     return this->m_wallpapers;

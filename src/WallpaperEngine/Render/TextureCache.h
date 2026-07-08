@@ -11,6 +11,10 @@
 
 using namespace WallpaperEngine::Render;
 
+namespace WallpaperEngine::Assets {
+class AssetLocator;
+}
+
 namespace WallpaperEngine::Render {
 class AlbumTexture;
 namespace Helpers {
@@ -31,7 +35,9 @@ public:
      * @param filename
      * @return
      */
-    std::shared_ptr<const TextureProvider> resolve (const std::string& filename);
+    std::shared_ptr<const TextureProvider> resolve (
+	const std::string& filename, const WallpaperEngine::Assets::AssetLocator& locator
+    );
 
     /**
      * Registers a texture in the cache
@@ -40,6 +46,13 @@ public:
      * @param texture
      */
     void store (const std::string& name, std::shared_ptr<const TextureProvider> texture);
+
+    /**
+     * Drops all resolved textures. Called before each wallpaper build so a scene only ever resolves
+     * its own textures — the cache is a per-build dedup, not a cross-scene store, and two scenes can
+     * legitimately hold different textures under the same filename.
+     */
+    void clear ();
 
 private:
     /** The previous album thumbnail texture */

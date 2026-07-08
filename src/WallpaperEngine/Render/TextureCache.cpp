@@ -1,6 +1,7 @@
 #include "TextureCache.h"
 
 #include "AlbumTexture.h"
+#include "WallpaperEngine/Assets/AssetLocator.h"
 #include "WallpaperEngine/FileSystem/Container.h"
 
 #include "CTexture.h"
@@ -18,7 +19,7 @@
 using namespace WallpaperEngine::Render;
 using namespace WallpaperEngine::FileSystem;
 using namespace WallpaperEngine::Data::Parsers;
-using namespace WallpaperEngine::Data::Assets;
+using namespace WallpaperEngine::Assets;
 
 TextureCache::TextureCache (RenderContext& context) : Helpers::ContextAware (context) {
     // these textures are special cases, so make sure they're created only upon request
@@ -56,33 +57,49 @@ TextureCache::TextureCache (RenderContext& context) : Helpers::ContextAware (con
 
 TextureCache::~TextureCache () { this->m_mediaCallback (); }
 
-std::shared_ptr<const TextureProvider> TextureCache::resolve (const std::string& filename) {
+namespace {
+// Build a CTexture from a filename found in the given locator's container.
+std::shared_ptr<const TextureProvider> loadTextureFrom (
+    RenderContext& context, const AssetLocator& locator, const std::string& filename
+) {
+    const auto contents = locator.texture (filename);
+    auto stream = BinaryReader (contents);
+    auto metadataLoader = [&locator] (const std::string& metaFilename) -> std::string {
+	return locator.readString (std::filesystem::path ("materials") / metaFilename);
+    };
+    auto parsedTexture = TextureParser::parse (stream, filename, metadataLoader);
+    auto texture = std::make_shared<CTexture> (context, std::move (parsedTexture));
+#if !NDEBUG
+    glObjectLabel (GL_TEXTURE, texture->getTextureID (0), -1, filename.c_str ());
+#endif
+    return texture;
+}
+} // namespace
+
+std::shared_ptr<const TextureProvider> TextureCache::resolve (
+    const std::string& filename, const AssetLocator& locator
+) {
     if (const auto found = this->m_textureCache.find (filename); found != this->m_textureCache.end ()) {
 	return found->second;
     }
 
-    // search for the texture in all the different containers just in case
+    // Resolve from the requesting scene's OWN container first. This is what keeps two scenes'
+    // same-named textures from colliding through the shared cache (the cache is cleared per build,
+    // so it only ever holds the scene currently being built).
+    try {
+	auto texture = loadTextureFrom (this->getContext (), locator, filename);
+	this->store (filename, texture);
+	return texture;
+    } catch (AssetLoadException&) {
+	// not in this scene's container — fall through to a broader search
+    }
+
+    // Fallback: search every loaded background's container (rare — a texture that lives outside the
+    // requesting scene's own container).
     for (const auto& project : this->getContext ().getApp ().getBackgrounds () | std::views::values) {
 	try {
-	    const auto contents = project->assetLocator->texture (filename);
-	    auto stream = BinaryReader (contents);
-
-	    // Create metadata loader lambda that captures the assetLocator
-	    // so we need to construct the full path here
-	    auto metadataLoader = [&project] (const std::string& metaFilename) -> std::string {
-		std::filesystem::path fullPath = std::filesystem::path ("materials") / metaFilename;
-		return project->assetLocator->readString (fullPath);
-	    };
-
-	    auto parsedTexture = TextureParser::parse (stream, filename, metadataLoader);
-	    auto texture = std::make_shared<CTexture> (this->getContext (), std::move (parsedTexture));
-
-#if !NDEBUG
-	    glObjectLabel (GL_TEXTURE, texture->getTextureID (0), -1, filename.c_str ());
-#endif
-
+	    auto texture = loadTextureFrom (this->getContext (), *project->assetLocator, filename);
 	    this->store (filename, texture);
-
 	    return texture;
 	} catch (AssetLoadException&) {
 	    // ignored, this happens if we're looking at the wrong background
@@ -92,6 +109,8 @@ std::shared_ptr<const TextureProvider> TextureCache::resolve (const std::string&
     // TODO: FILL IN WITH A CHECKERED PATTERN TEXTURE INSTEAD?
     throw AssetLoadException ("Cannot find file", filename, std::error_code ());
 }
+
+void TextureCache::clear () { this->m_textureCache.clear (); }
 
 void TextureCache::store (const std::string& name, std::shared_ptr<const TextureProvider> texture) {
     this->m_textureCache.insert_or_assign (name, texture);

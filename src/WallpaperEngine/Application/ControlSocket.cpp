@@ -125,15 +125,18 @@ std::string ControlSocket::handle (WallpaperApplication& app, const std::string&
 	iss >> screen;
 	return app.setBackground (screen, rest ()) ? "ok\n" : "error\n";
     }
-    if (cmd == "preload") {
-	// Build a wallpaper into the resident cache ahead of time so a later `bg` to it is instant.
-	app.preload (rest ());
-	return "ok\n";
-    }
     if (cmd == "property") {
 	std::string screen, key;
 	iss >> screen >> key;
 	return app.setProperty (screen, key, rest ()) ? "ok\n" : "error\n";
+    }
+    if (cmd == "stage") {
+	// Record a property override for the next build (no live effect): stage all saved properties,
+	// then `bg`, so the wallpaper builds once with the right values.
+	std::string key;
+	iss >> key;
+	app.stageProperty (key, rest ());
+	return "ok\n";
     }
     if (cmd == "scaling") {
 	std::string screen, mode;

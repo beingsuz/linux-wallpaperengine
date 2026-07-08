@@ -350,6 +350,11 @@ std::unique_ptr<CWallpaper> CWallpaper::fromWallpaper (
     WebBrowser::WebBrowserContext* browserContext, const WallpaperState::TextureUVsScaling& scalingMode,
     const uint32_t& clampMode
 ) {
+    // The texture cache is a per-build dedup, not a cross-scene store: clear it so this wallpaper
+    // resolves only its own textures and can't pick up a same-named texture cached by another scene
+    // that is kept resident (which would corrupt this one's appearance).
+    context.resetTextureCache ();
+
     if (wallpaper.is<Scene> ()) {
 	return std::make_unique<WallpaperEngine::Render::Wallpapers::CScene> (
 	    wallpaper, context, audioContext, scalingMode, clampMode

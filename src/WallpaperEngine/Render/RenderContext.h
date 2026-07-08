@@ -51,7 +51,11 @@ namespace Render {
 	 * framebuffers like the original build (live size can drift and break the effect-composite chain).
 	 */
 	[[nodiscard]] glm::ivec2 getStableOutputSize () const;
-	[[nodiscard]] std::shared_ptr<const TextureProvider> resolveTexture (const std::string& name) const;
+	[[nodiscard]] std::shared_ptr<const TextureProvider> resolveTexture (
+	    const std::string& name, const Assets::AssetLocator& locator
+	) const;
+	/** Drop resolved textures; called before each wallpaper build (see TextureCache::clear). */
+	void resetTextureCache () const;
 	[[nodiscard]] const std::map<std::string, std::shared_ptr<CWallpaper>>& getWallpapers () const;
 	[[nodiscard]] Media::MediaSource& getMediaSource () const;
 
