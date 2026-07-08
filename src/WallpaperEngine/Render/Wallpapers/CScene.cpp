@@ -372,6 +372,14 @@ void CScene::renderFrame (const glm::ivec4& viewport) {
     // Force all channels on before the clear: a leaked alpha-disabled mask leaves stale alpha that
     // every alpha-blended effect writeback then composites against.
     glColorMask (true, true, true, true);
+    // Clear color is global GL state, set once at construction. Another scene's ctor may have
+    // overwritten it since ours ran (e.g. this scene was built, then other scenes were built/rendered
+    // before it was displayed — a resident/preloaded scene never re-runs its ctor on bind). Re-apply
+    // our own each frame so the scene FBO always clears to the intended colour, not a leaked one: a
+    // non-black leak seeds the model<->bloom reflection feedback loop off zero and it grows to a gray
+    // fixed point (the "RGB fan" over the whole sky).
+    const glm::vec3 clearColor = this->getScene ().colors.clear->value->getVec3 ();
+    glClearColor (clearColor.r, clearColor.g, clearColor.b, 1.0f);
     glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     for (const auto& cur : this->m_objectsByRenderOrder) {

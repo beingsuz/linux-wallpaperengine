@@ -130,6 +130,11 @@ std::string ControlSocket::handle (WallpaperApplication& app, const std::string&
 	iss >> screen >> key;
 	return app.setProperty (screen, key, rest ()) ? "ok\n" : "error\n";
     }
+    if (cmd == "preload") {
+	// DEBUG (local): build a wallpaper ahead of a switch.
+	app.preload (rest ());
+	return "ok\n";
+    }
     if (cmd == "stage") {
 	// Record a property override for the next build (no live effect): stage all saved properties,
 	// then `bg`, so the wallpaper builds once with the right values.

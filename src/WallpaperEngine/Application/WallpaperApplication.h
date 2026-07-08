@@ -23,6 +23,10 @@
 
 #include <set>
 
+namespace WallpaperEngine::Render {
+class CWallpaper;
+}
+
 namespace WallpaperEngine::Application {
 
 using namespace WallpaperEngine::Assets;
@@ -64,7 +68,7 @@ public:
     /**
      * @return Maps screens to loaded backgrounds
      */
-    [[nodiscard]] const std::map<std::string, ProjectUniquePtr>& getBackgrounds () const;
+    [[nodiscard]] const std::map<std::string, std::shared_ptr<Project>>& getBackgrounds () const;
     /**
      * @return The current application context
      */
@@ -89,6 +93,8 @@ public:
 
     /** Live control operations (control socket): apply changes without restarting the process. */
     bool setBackground (const std::string& screen, const std::string& path);
+    /** DEBUG (local): build a wallpaper into the resident cache ahead of a switch. */
+    void preload (const std::string& path);
     /** Record a property override for the NEXT (re)build without touching the current wallpaper. */
     void stageProperty (const std::string& key, const std::string& value);
     bool setProperty (const std::string& screen, const std::string& key, const std::string& value);
@@ -189,9 +195,29 @@ private:
 
     /** The application context that contains the current app settings */
     ApplicationContext& m_context;
-    /** Maps screens to backgrounds */
-    std::map<std::string, ProjectUniquePtr> m_backgrounds {};
+    /** Maps screens to backgrounds (shared so the resident cache can keep the same project alive) */
+    std::map<std::string, std::shared_ptr<Project>> m_backgrounds {};
     std::map<std::string, ActivePlaylist> m_activePlaylists {};
+
+    /** A fully-built wallpaper kept alive so switching back to it is an instant bind. */
+    struct ResidentBackground {
+	std::shared_ptr<Project> project;
+	std::shared_ptr<WallpaperEngine::Render::CWallpaper> wallpaper;
+    };
+    /** Resident cache keyed by resolved wallpaper path (only scene wallpapers are cached). */
+    std::map<std::string, ResidentBackground> m_resident {};
+    /** LRU order of resident paths, front = least recently used, for eviction. */
+    std::vector<std::string> m_residentOrder {};
+    /** Max scenes kept resident at once (VRAM bound); least-recently-used are evicted. */
+    static constexpr std::size_t RESIDENT_MAX = 12;
+    /** Build (or fetch cached) a resident wallpaper for path. Scene types are stored in the cache;
+     *  other types are built fresh each call and returned without caching. */
+    ResidentBackground ensureResident (const std::string& screen, const std::string& path);
+    /** Record a resident path as most-recently-used and evict past RESIDENT_MAX. */
+    void touchResident (const std::string& path);
+    /** Drop a path's cached build so the next setBackground rebuilds it (after a property / scaling /
+     *  clamp / render-scale / audio-device change that alters what the build produces). */
+    void invalidateResident (const std::string& path);
 
     std::unique_ptr<WallpaperEngine::Audio::Drivers::Detectors::AudioPlayingDetector> m_audioDetector = nullptr;
     std::unique_ptr<WallpaperEngine::Audio::AudioContext> m_audioContext = nullptr;

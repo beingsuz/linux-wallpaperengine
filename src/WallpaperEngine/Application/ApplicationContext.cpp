@@ -657,6 +657,8 @@ void ApplicationContext::loadSettingsFromArgv () {
 		this->settings.render.debug.noSolidFinal = true;
 	    } else if (value == "pass-log") {
 		this->settings.render.debug.passLog = true;
+	    } else if (value == "pass-readback") {
+		this->settings.render.debug.passReadback = true;
 	    } else if (value.rfind ("object=", 0) == 0) {
 		this->settings.render.debug.objectFilter = parseDebugId ("object=");
 	    } else if (value.rfind ("skip-object=", 0) == 0) {

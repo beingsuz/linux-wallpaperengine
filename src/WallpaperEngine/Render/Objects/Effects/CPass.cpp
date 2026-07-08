@@ -627,6 +627,31 @@ void CPass::render () {
 	    );
 	}
     }
+
+    if (debug.passReadback) {
+	// Sample a sparse grid of the pass output and log its mean, to locate where in an effect
+	// chain the picture is lost (e.g. a pass that unexpectedly reads/writes white).
+	const int w = std::max (1, (int) this->m_drawTo->getRealWidth ());
+	const int h = std::max (1, (int) this->m_drawTo->getRealHeight ());
+	glBindFramebuffer (GL_READ_FRAMEBUFFER, this->m_drawTo->getFramebuffer ());
+	double sum[4] = {0, 0, 0, 0};
+	int count = 0;
+	for (int gy = 1; gy <= 4; gy++) {
+	    for (int gx = 1; gx <= 4; gx++) {
+		float px[4] = {0, 0, 0, 0};
+		glReadPixels (gx * w / 5, gy * h / 5, 1, 1, GL_RGBA, GL_FLOAT, px);
+		for (int c = 0; c < 4; c++) {
+		    sum[c] += px[c];
+		}
+		count++;
+	    }
+	}
+	sLog.out (
+	    "[READBACK] object=", this->m_renderable.getId (), " shader=", this->m_pass.shader,
+	    " drawTo=", this->m_drawTo->getName (), " mean=", sum[0] / count, ",", sum[1] / count, ",",
+	    sum[2] / count, ",", sum[3] / count
+	);
+    }
 }
 
 std::shared_ptr<const FBOProvider> CPass::getFBOProvider () const { return this->m_fboProvider; }

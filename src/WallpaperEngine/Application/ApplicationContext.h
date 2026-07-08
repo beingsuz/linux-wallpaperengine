@@ -138,6 +138,7 @@ public:
 		bool baseOnly;
 		bool noSolidFinal;
 		bool passLog;
+		bool passReadback;
 		std::optional<int> objectFilter;
 		std::vector<int> skipObjects;
 		std::vector<int> skipEffects;
@@ -219,6 +220,7 @@ public:
                 .baseOnly = false,
                 .noSolidFinal = false,
 	                .passLog = false,
+	                .passReadback = false,
 	                .objectFilter = std::nullopt,
 	                .skipObjects = {},
 	                .skipEffects = {},

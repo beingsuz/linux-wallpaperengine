@@ -1005,7 +1005,7 @@ void WallpaperApplication::signal (int signal) {
     this->m_context.state.general.keepRunning = false;
 }
 
-const std::map<std::string, ProjectUniquePtr>& WallpaperApplication::getBackgrounds () const {
+const std::map<std::string, std::shared_ptr<Project>>& WallpaperApplication::getBackgrounds () const {
     return this->m_backgrounds;
 }
 
@@ -1027,28 +1027,24 @@ GLuint WallpaperApplication::getDestinationFramebuffer () const { return this->m
 
 bool WallpaperApplication::setBackground (const std::string& screen, const std::string& path) {
     try {
-	auto project = this->loadBackground (path);
-	this->setupPropertiesForProject (*project);
-	this->ensureBrowserForProject (*project);
-	this->m_backgrounds[screen] = std::move (project);
+	// Cache hit -> instant bind of an already-built scene; miss -> build once (and cache scenes).
+	auto resident = this->ensureResident (screen, path);
+	this->m_backgrounds[screen] = resident.project;
 
-	const auto scalingIt = this->m_context.settings.general.screenScalings.find (screen);
-	const auto clampIt = this->m_context.settings.general.screenClamps.find (screen);
-	const auto scaling = scalingIt != this->m_context.settings.general.screenScalings.end ()
-	    ? scalingIt->second
-	    : this->m_context.settings.render.window.scalingMode;
-	const auto clamp = clampIt != this->m_context.settings.general.screenClamps.end ()
-	    ? clampIt->second
-	    : this->m_context.settings.render.window.clamp;
+	if (this->m_renderContext && resident.wallpaper != nullptr) {
+	    this->m_renderContext->setWallpaper (screen, resident.wallpaper);
+	}
 
+	// Freeze resident-but-hidden scenes (no GPU/audio/decoder work) and run only what's on screen.
+	for (const auto& res : this->m_resident | std::views::values) {
+	    if (res.wallpaper != nullptr) {
+		res.wallpaper->setPause (true);
+	    }
+	}
 	if (this->m_renderContext) {
-	    this->m_renderContext->setWallpaper (
-		screen,
-		WallpaperEngine::Render::CWallpaper::fromWallpaper (
-		    *this->m_backgrounds[screen]->wallpaper, *this->m_renderContext, *this->m_audioContext,
-		    this->m_browserContext.get (), scaling, clamp
-		)
-	    );
+	    for (const auto& wp : this->m_renderContext->getWallpapers () | std::views::values) {
+		wp->setPause (false);
+	    }
 	}
 
 	this->m_context.settings.general.screenBackgrounds[screen] = path;
@@ -1058,6 +1054,84 @@ bool WallpaperApplication::setBackground (const std::string& screen, const std::
     } catch (const std::exception& e) {
 	sLog.error ("setBackground failed on ", screen, ": ", e.what ());
 	return false;
+    }
+}
+
+WallpaperApplication::ResidentBackground
+WallpaperApplication::ensureResident (const std::string& screen, const std::string& path) {
+    // Cache hit: reuse the already-parsed project and already-built GPU resources.
+    if (const auto it = this->m_resident.find (path); it != this->m_resident.end ()) {
+	this->touchResident (path);
+	return it->second;
+    }
+
+    // Cold load: parse + build once.
+    std::shared_ptr<Project> project = this->loadBackground (path);
+    this->setupPropertiesForProject (*project);
+    this->ensureBrowserForProject (*project);
+
+    std::shared_ptr<Render::CWallpaper> wallpaper;
+    if (this->m_renderContext) {
+	const auto scalingIt = this->m_context.settings.general.screenScalings.find (screen);
+	const auto clampIt = this->m_context.settings.general.screenClamps.find (screen);
+	const auto scaling = scalingIt != this->m_context.settings.general.screenScalings.end ()
+	    ? scalingIt->second
+	    : this->m_context.settings.render.window.scalingMode;
+	const auto clamp = clampIt != this->m_context.settings.general.screenClamps.end ()
+	    ? clampIt->second
+	    : this->m_context.settings.render.window.clamp;
+	// TextureCache::resolve searches every registered background for a texture's container, so the
+	// project must be visible in m_backgrounds while it builds. Register under a temporary key and
+	// remove it afterwards — the real per-screen binding is done by the caller, and a resident
+	// entry must never be reachable through m_backgrounds or LRU eviction could not free it.
+	const std::string buildKey = "__build__:" + path;
+	this->m_backgrounds[buildKey] = project;
+	try {
+	    wallpaper = Render::CWallpaper::fromWallpaper (
+		*project->wallpaper, *this->m_renderContext, *this->m_audioContext, this->m_browserContext.get (),
+		scaling, clamp
+	    );
+	} catch (...) {
+	    this->m_backgrounds.erase (buildKey);
+	    throw;
+	}
+	this->m_backgrounds.erase (buildKey);
+    }
+    ResidentBackground resident { std::move (project), std::move (wallpaper) };
+
+    // Only scenes are safe to keep resident (pure GL: textures/shaders/FBOs). Web/video keep
+    // browser/decoder state that must not linger hidden, so they are rebuilt on each switch.
+    if (resident.project->wallpaper != nullptr && resident.project->wallpaper->is<Scene> ()) {
+	this->m_resident[path] = resident;
+	this->touchResident (path);
+    }
+    return resident;
+}
+
+void WallpaperApplication::invalidateResident (const std::string& path) {
+    this->m_resident.erase (path);
+    std::erase (this->m_residentOrder, path);
+}
+
+void WallpaperApplication::touchResident (const std::string& path) {
+    std::erase (this->m_residentOrder, path);
+    this->m_residentOrder.push_back (path);
+    // Evict least-recently-used past the cap, but never a path currently bound to a screen.
+    while (this->m_residentOrder.size () > RESIDENT_MAX) {
+	const std::string victim = this->m_residentOrder.front ();
+	bool bound = false;
+	for (const auto& active : this->m_context.settings.general.screenBackgrounds | std::views::values) {
+	    if (active == victim) {
+		bound = true;
+		break;
+	    }
+	}
+	this->m_residentOrder.erase (this->m_residentOrder.begin ());
+	if (bound) {
+	    this->m_residentOrder.push_back (victim); // keep the on-screen one resident
+	} else {
+	    this->m_resident.erase (victim);
+	}
     }
 }
 
@@ -1084,6 +1158,24 @@ bool propertyGatesEffectVisibility (const Project& project, const std::string& k
     return false;
 }
 } // namespace
+
+void WallpaperApplication::preload (const std::string& path) {
+    if (this->m_resident.contains (path)) {
+	return;
+    }
+    try {
+	// Build into the cache without binding to any screen. Use the first screen's scaling/clamp.
+	const std::string screen = this->m_context.settings.general.screenBackgrounds.empty ()
+	    ? std::string ("default")
+	    : this->m_context.settings.general.screenBackgrounds.begin ()->first;
+	auto resident = this->ensureResident (screen, path);
+	if (resident.wallpaper != nullptr) {
+	    resident.wallpaper->setPause (true); // stays hidden (and idle) until a switch binds it
+	}
+    } catch (const std::exception& e) {
+	sLog.error ("preload failed for ", path, ": ", e.what ());
+    }
+}
 
 void WallpaperApplication::stageProperty (const std::string& key, const std::string& value) {
     // Record a property override without touching the current wallpaper: the next (re)build reads it
@@ -1123,6 +1215,9 @@ bool WallpaperApplication::setProperty (const std::string& screen, const std::st
     if (changed && (structural || propertyGatesEffectVisibility (*bg->second, key))) {
 	const auto it = this->m_context.settings.general.screenBackgrounds.find (screen);
 	if (it != this->m_context.settings.general.screenBackgrounds.end ()) {
+	    // The cache holds the build made with the OLD value; drop it so setBackground rebuilds
+	    // with the recorded override instead of rebinding the stale one.
+	    this->invalidateResident (it->second.string ());
 	    return this->setBackground (screen, it->second.string ());
 	}
     }
@@ -1156,8 +1251,11 @@ bool WallpaperApplication::setScreenScaling (const std::string& screen, const st
 
     this->m_context.settings.general.screenScalings[screen] = value;
     const auto it = this->m_context.settings.general.screenBackgrounds.find (screen);
-    return it != this->m_context.settings.general.screenBackgrounds.end ()
-	&& this->setBackground (screen, it->second.string ());
+    if (it == this->m_context.settings.general.screenBackgrounds.end ()) {
+	return false;
+    }
+    this->invalidateResident (it->second.string ()); // scaling is baked at build time
+    return this->setBackground (screen, it->second.string ());
 }
 
 bool WallpaperApplication::setScreenClamp (const std::string& screen, const std::string& mode) {
@@ -1174,8 +1272,11 @@ bool WallpaperApplication::setScreenClamp (const std::string& screen, const std:
 
     this->m_context.settings.general.screenClamps[screen] = value;
     const auto it = this->m_context.settings.general.screenBackgrounds.find (screen);
-    return it != this->m_context.settings.general.screenBackgrounds.end ()
-	&& this->setBackground (screen, it->second.string ());
+    if (it == this->m_context.settings.general.screenBackgrounds.end ()) {
+	return false;
+    }
+    this->invalidateResident (it->second.string ()); // clamp is baked at build time
+    return this->setBackground (screen, it->second.string ());
 }
 
 void WallpaperApplication::applyPlaybackSpeed () {
@@ -1232,15 +1333,19 @@ bool WallpaperApplication::setOption (const std::string& key, const std::string&
 	settings.render.pauseOnFullscreen = !on;
     } else if (key == "renderscale") {
 	settings.render.renderScale = std::clamp (static_cast<float> (std::atof (value.c_str ())), 0.5f, 2.0f);
-	// Recreate the render targets at the new supersampling factor. Flash-free in-process
-	// rebuild (the GL context/process stay alive); CWallpaper reads renderScale at construction.
+	// FBO sizes are baked at build time, so every cached build is now stale — drop the whole cache
+	// and rebuild the on-screen wallpapers. Flash-free in-process (the GL context/process stay alive).
+	this->m_resident.clear ();
+	this->m_residentOrder.clear ();
 	for (const auto& [screen, path] : settings.general.screenBackgrounds) {
 	    this->setBackground (screen, path.string ());
 	}
     } else if (key == "audiodevice") {
 	settings.audio.device = (value == "default") ? "" : value;
-	// Re-init the capture pipeline on the new device, then rebuild the wallpapers so they
-	// bind the freshly-created audio context (they hold a reference to it).
+	// Re-init the capture pipeline on the new device. Every cached build holds a reference to the
+	// old audio context that setupAudio replaces, so drop the whole cache before rebuilding.
+	this->m_resident.clear ();
+	this->m_residentOrder.clear ();
 	this->setupAudio ();
 	for (const auto& [screen, path] : settings.general.screenBackgrounds) {
 	    this->setBackground (screen, path.string ());
